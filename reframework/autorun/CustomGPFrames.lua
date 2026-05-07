@@ -259,6 +259,12 @@ local function collect_active_overrides(active_weapon_type)
     return desired
 end
 
+-- 把单个招式配置恢复到预设表里的默认值。
+local function reset_move_state(move_def, move_state)
+    move_state.enabled = move_def.enabledByDefault or false
+    move_state.value = move_def.default
+end
+
 -- 每帧应用一次当前武器对应的覆盖配置。
 -- 这样切场景、换武器、动作树刷新后都能重新套回去。
 local function apply_custom_gp_frames()
@@ -333,12 +339,12 @@ local function draw_weapon_moves(weapon_def)
             )
             changed = changed or toggle
 
-            imgui.text("Action Index: " .. tostring(move_def.actionIndex))
-            imgui.text("当前实现: " .. (move_def.modeHint or "直接覆盖对应帧字段"))
-
-            if move_def.description ~= nil and move_def.description ~= "" then
-                imgui.text(move_def.description)
+            if imgui.button("恢复默认##move_reset_" .. weapon_def.weaponType .. "_" .. move_def.id) then
+                reset_move_state(move_def, move_state)
+                changed = true
             end
+
+            imgui.text("Action Index: " .. tostring(move_def.actionIndex))
 
             imgui.tree_pop()
         end
