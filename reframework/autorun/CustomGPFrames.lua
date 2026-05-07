@@ -30,7 +30,8 @@ local config_path = "CustomGPFrames.json"
 local ordered_weapons = defs.ordered_weapons
 local weapon_by_type = defs.weapon_by_type
 local weapon_combo_labels = defs.weapon_combo_labels
-local default_selected_weapon = 7
+local general_weapon_type = "general"
+local default_selected_weapon = general_weapon_type
 
 -- 默认配置现在不再暴露 ActionIndex 给用户，而是按“武器 -> 招式”组织。
 local default_settings = {
@@ -239,22 +240,27 @@ end
 -- 收集当前装备武器应该生效的招式配置。
 local function collect_active_overrides(active_weapon_type)
     local desired = {}
-    local weapon_def = weapon_by_type[active_weapon_type]
-    if weapon_def == nil then
-        return desired
-    end
+    local function collect_from_scope(scope_weapon_type)
+        local weapon_def = weapon_by_type[scope_weapon_type]
+        if weapon_def == nil then
+            return
+        end
 
-    local weapon_settings = get_weapon_settings(active_weapon_type)
+        local weapon_settings = get_weapon_settings(scope_weapon_type)
 
-    for _, move_def in ipairs(weapon_def.moves) do
-        local move_state = weapon_settings[move_def.id]
-        if move_state and move_state.enabled then
-            desired[move_def.actionIndex] = {
-                moveDef = move_def,
-                moveState = move_state
-            }
+        for _, move_def in ipairs(weapon_def.moves) do
+            local move_state = weapon_settings[move_def.id]
+            if move_state and move_state.enabled then
+                desired[move_def.actionIndex] = {
+                    moveDef = move_def,
+                    moveState = move_state
+                }
+            end
         end
     end
+
+    collect_from_scope(general_weapon_type)
+    collect_from_scope(active_weapon_type)
 
     return desired
 end

@@ -4,6 +4,11 @@
 
 local ordered_weapons = {
     {
+        weaponType = "general",
+        weaponName = "通用动作",
+        moves = {}
+    },
+    {
         weaponType = 0,
         weaponName = "大剑",
         moves = {}
