@@ -114,6 +114,21 @@ local function get_action(action_index)
     return actions[action_index]
 end
 
+-- 某些招式在动作树里会拆成多个方向、多个派生版本。
+-- 例如弓的闪身箭斩，会分别挂在前后左右以及 MR 对应节点上。
+-- 这里统一把它们整理成 actionIndex 列表，方便 UI 只展示成一个招式。
+local function get_move_action_indices(move_def)
+    if type(move_def.actionIndices) == "table" then
+        return move_def.actionIndices
+    end
+
+    if move_def.actionIndex ~= nil then
+        return { move_def.actionIndex }
+    end
+
+    return {}
+end
+
 -- 取某把武器在配置文件里的状态表，没有的话就创建。
 local function get_weapon_settings(weapon_type)
     local key = tostring(weapon_type)
@@ -251,10 +266,12 @@ local function collect_active_overrides(active_weapon_type)
         for _, move_def in ipairs(weapon_def.moves) do
             local move_state = weapon_settings[move_def.id]
             if move_state and move_state.enabled then
-                desired[move_def.actionIndex] = {
-                    moveDef = move_def,
-                    moveState = move_state
-                }
+                for _, action_index in ipairs(get_move_action_indices(move_def)) do
+                    desired[action_index] = {
+                        moveDef = move_def,
+                        moveState = move_state
+                    }
+                end
             end
         end
     end
@@ -350,7 +367,8 @@ local function draw_weapon_moves(weapon_def)
                 changed = true
             end
 
-            imgui.text("Action Index: " .. tostring(move_def.actionIndex))
+            local action_indices = get_move_action_indices(move_def)
+            imgui.text("Action Indices: " .. table.concat(action_indices, ", "))
 
             imgui.tree_pop()
         end

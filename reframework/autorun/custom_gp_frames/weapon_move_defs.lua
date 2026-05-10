@@ -104,7 +104,30 @@ local ordered_weapons = {
     {
         weaponType = 13,
         weaponName = "弓",
-        moves = {}
+        moves = {
+            {
+                id = "dodgebolt",
+                label = "闪身箭斩",
+                actionIndices = {
+                    9234,
+                    9251,
+                    9269,
+                    9287,
+                    10615,
+                    10632,
+                    10649,
+                    10666
+                },
+                valueMode = "end_frame",
+                sliderLabel = "GP结束帧",
+                min = 0,
+                max = 60,
+                default = 10,
+                enabledByDefault = false,
+                modeHint = "直接覆盖 PlayerFsm2ActionDamageReflex 的 _EndFrame",
+                description = "弓的闪身箭斩成功判定当前确认走 DamageReflexSuccess 分支。这里统一覆盖普通版前后左右，以及 MR 的 ESA 对应主节点里的 DamageReflex 结束帧。默认原值为 10。"
+            }
+        }
     }
 }
 
