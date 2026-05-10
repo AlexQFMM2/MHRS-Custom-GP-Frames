@@ -193,7 +193,7 @@
             valueMode = "end_frame",
             sliderLabel = "GP结束帧",
             min = 0,
-            max = 60,
+            max = 120,
             default = 24,
             enabledByDefault = false,
             modeHint = "直接覆盖 _EndFrame",
@@ -206,7 +206,7 @@
             valueMode = "end_frame",
             sliderLabel = "GP结束帧",
             min = 0,
-            max = 60,
+            max = 120,
             default = 20,
             enabledByDefault = false,
             modeHint = "直接覆盖 _EndFrame",
@@ -259,7 +259,7 @@
     valueMode = "end_frame",
     sliderLabel = "GP结束帧",
     min = 0,
-    max = 60,
+    max = 120,
     default = 10,
     enabledByDefault = false
 }
