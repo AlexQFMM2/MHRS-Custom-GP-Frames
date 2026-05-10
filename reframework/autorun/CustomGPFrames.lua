@@ -62,7 +62,8 @@ local runtime_state = {
 local longsword_iai_reward_action_types = {
     ["snow.player.fsm.PlayerFsm2ActionLongSwordSuccessIaiCounter"] = true,
     ["snow.player.fsm.PlayerFsm2ActionLongSwordSetCounterSuccessMotionSpeed"] = true,
-    ["snow.player.fsm.PlayerFsm2ActionLongSwordSubGauge"] = true
+    ["snow.player.fsm.PlayerFsm2ActionLongSwordSubGauge"] = true,
+    ["snow.player.fsm.PlayerFsm2ActionLongSwordAddLv"] = true
 }
 
 local longsword_max_gauge_level = 3
@@ -633,6 +634,8 @@ local function queue_longsword_iai_reward(owner_type)
         validationFramesRemaining = 2,
         jumpAttempted = false,
         jumpTargetNodeId = nil,
+        stagedBaseRewardJumpAttempted = false,
+        stagedBaseRewardJumpSucceeded = false,
         attackSideObserved = false,
         attackSideNodeId = nil,
         attackSideMotionId = nil,
@@ -689,7 +692,7 @@ end
 
 local function has_longsword_iai_success_signal(pending, move_def)
     local current_node_id = get_current_node_id()
-    if current_node_id == move_def.mrSuccessNodeId or current_node_id == move_def.successNodeId then
+    if current_node_id == move_def.successNodeId then
         return true
     end
 
@@ -739,6 +742,22 @@ local function process_pending_longsword_iai_reward()
         end
 
         return
+    end
+
+    local current_node_id = get_current_node_id()
+
+    -- MR 成功分支里有 SuccessIaiCounter，但升刃和成功伤害挂在基础 success 节点。
+    -- 所以这里补做第二段跳转，把奖励链尽量补完整。
+    if not pending.stagedBaseRewardJumpAttempted and current_node_id == config.moveDef.mrSuccessNodeId then
+        pending.stagedBaseRewardJumpAttempted = true
+
+        if try_jump_to_node(config.moveDef.successNodeId) then
+            pending.stagedBaseRewardJumpSucceeded = true
+            pending.jumpTargetNodeId = config.moveDef.successNodeId
+            runtime_state.lastJumpTargetNodeId = config.moveDef.successNodeId
+            pending.validationFramesRemaining = math.max(pending.validationFramesRemaining, 2)
+            return
+        end
     end
 
     if has_longsword_iai_success_signal(pending, config.moveDef) then
