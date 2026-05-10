@@ -49,10 +49,12 @@ local original_frames = {}
 -- 这里不做全武器泛化，只服务当前的太刀居合实验功能。
 local runtime_state = {
     activeLongSwordIaiAttempt = nil,
+    activeLongSwordSpecialSheatheAttempt = nil,
     pendingLongSwordIaiReward = nil,
     lastProcessedDamageTick = nil,
     lastForcedSuccessAt = nil,
     lastJumpTargetNodeId = nil,
+    lastAutoIaiAt = nil,
     lastKnownMotionId = nil,
     lastKnownMotionFrame = nil,
     lastKnownWeaponType = nil,
@@ -314,6 +316,10 @@ local function ensure_move_state(weapon_type, move_def)
         move_state.rewardSimulationEnabled = move_def.rewardSimulationEnabledByDefault or false
     end
 
+    if move_def.autoIaiMode ~= nil and move_state.autoIaiEnabled == nil then
+        move_state.autoIaiEnabled = move_def.autoIaiEnabledByDefault or false
+    end
+
     return move_state
 end
 
@@ -446,6 +452,10 @@ local function reset_move_state(move_def, move_state)
     if move_def.rewardSimulationMode ~= nil then
         move_state.rewardSimulationEnabled = move_def.rewardSimulationEnabledByDefault or false
     end
+
+    if move_def.autoIaiMode ~= nil then
+        move_state.autoIaiEnabled = move_def.autoIaiEnabledByDefault or false
+    end
 end
 
 local function find_move_definition(weapon_type, move_id)
@@ -463,14 +473,14 @@ local function find_move_definition(weapon_type, move_id)
     return nil
 end
 
-local function get_longsword_iai_reward_config()
+local function get_longsword_iai_move_config()
     local move_def = find_move_definition(2, "iai_spirit_slash_counter")
     if not move_def then
         return nil
     end
 
     local move_state = ensure_move_state(2, move_def)
-    if not settings.modEnabled or not move_state.enabled or not move_state.rewardSimulationEnabled then
+    if not settings.modEnabled or not move_state.enabled then
         return nil
     end
 
@@ -478,6 +488,24 @@ local function get_longsword_iai_reward_config()
         moveDef = move_def,
         moveState = move_state
     }
+end
+
+local function get_longsword_iai_reward_config()
+    local config = get_longsword_iai_move_config()
+    if not config or not config.moveState.rewardSimulationEnabled then
+        return nil
+    end
+
+    return config
+end
+
+local function get_longsword_iai_auto_config()
+    local config = get_longsword_iai_move_config()
+    if not config or not config.moveState.autoIaiEnabled then
+        return nil
+    end
+
+    return config
 end
 
 local function get_longsword_gauge_level()
@@ -567,14 +595,16 @@ end
 
 local function clear_longsword_iai_runtime()
     runtime_state.activeLongSwordIaiAttempt = nil
+    runtime_state.activeLongSwordSpecialSheatheAttempt = nil
     runtime_state.pendingLongSwordIaiReward = nil
     runtime_state.lastProcessedDamageTick = nil
     runtime_state.lastForcedSuccessAt = nil
     runtime_state.lastJumpTargetNodeId = nil
+    runtime_state.lastAutoIaiAt = nil
 end
 
-local function begin_longsword_iai_attempt(move_def, move_state, motion_frame)
-    runtime_state.activeLongSwordIaiAttempt = {
+local function create_longsword_iai_attempt(move_def, move_state, motion_frame, source_tag, started_node_id, started_node_name)
+    return {
         attemptId = runtime_state.nextAttemptId,
         motionId = move_def.resultMotionId,
         resultWeaponType = move_def.resultWeaponType,
@@ -585,10 +615,38 @@ local function begin_longsword_iai_attempt(move_def, move_state, motion_frame)
         consumed = false,
         rewardResolved = false,
         manualFallbackReward = false,
+        sourceTag = source_tag or "manual_iai_window",
         lastMotionFrame = motion_frame,
         createdMotionFrame = motion_frame,
-        startedNodeId = get_current_node_id(),
-        startedNodeName = get_current_node_name()
+        startedNodeId = started_node_id,
+        startedNodeName = started_node_name
+    }
+end
+
+local function begin_longsword_iai_attempt(move_def, move_state, motion_frame)
+    runtime_state.activeLongSwordIaiAttempt = create_longsword_iai_attempt(
+        move_def,
+        move_state,
+        motion_frame,
+        "manual_iai_window",
+        get_current_node_id(),
+        get_current_node_name()
+    )
+    runtime_state.nextAttemptId = runtime_state.nextAttemptId + 1
+end
+
+local function begin_longsword_special_sheathe_attempt(move_def, motion_frame)
+    runtime_state.activeLongSwordSpecialSheatheAttempt = {
+        attemptId = runtime_state.nextAttemptId,
+        standbyNodeId = move_def.specialSheatheReadyNodeId,
+        standbyNodeName = move_def.specialSheatheReadyNodeName,
+        standbyMotionId = move_def.specialSheatheReadyMotionId,
+        targetNodeId = move_def.autoIaiTargetNodeId,
+        targetNodeName = move_def.autoIaiTargetNodeName,
+        targetMotionId = move_def.autoIaiTargetMotionId,
+        lastMotionFrame = motion_frame,
+        createdMotionFrame = motion_frame,
+        consumed = false
     }
     runtime_state.nextAttemptId = runtime_state.nextAttemptId + 1
 end
@@ -616,19 +674,23 @@ local function try_jump_to_node(node_id)
     return ok == true
 end
 
-local function queue_longsword_iai_reward(owner_type)
-    local attempt = runtime_state.activeLongSwordIaiAttempt
+local function stage_longsword_iai_reward(attempt, owner_type, motion_frame, source_tag)
     if not attempt or attempt.consumed then
         return false
     end
 
     attempt.consumed = true
 
-    local motion_frame = get_motion_frame() or -1
-    runtime_state.lastProcessedDamageTick = tostring(attempt.attemptId) .. ":" .. tostring(motion_frame) .. ":" .. tostring(owner_type)
+    local effective_motion_frame = motion_frame
+    if effective_motion_frame == nil then
+        effective_motion_frame = get_motion_frame() or -1
+    end
+
+    runtime_state.lastProcessedDamageTick = tostring(attempt.attemptId) .. ":" .. tostring(effective_motion_frame) .. ":" .. tostring(owner_type)
     runtime_state.pendingLongSwordIaiReward = {
         attemptId = attempt.attemptId,
         ownerType = owner_type,
+        sourceTag = source_tag or attempt.sourceTag,
         gaugeLvBefore = get_longsword_gauge_level(),
         gaugeBefore = get_longsword_gauge(),
         validationFramesRemaining = 2,
@@ -643,6 +705,48 @@ local function queue_longsword_iai_reward(owner_type)
         manualFallbackReward = false
     }
 
+    return true
+end
+
+local function queue_longsword_iai_reward(owner_type)
+    return stage_longsword_iai_reward(
+        runtime_state.activeLongSwordIaiAttempt,
+        owner_type,
+        get_motion_frame(),
+        "manual_iai_window"
+    )
+end
+
+local function trigger_longsword_special_sheathe_auto_iai(config, owner_type)
+    local standby_attempt = runtime_state.activeLongSwordSpecialSheatheAttempt
+    if not config or not standby_attempt or standby_attempt.consumed then
+        return false
+    end
+
+    if not try_jump_to_node(config.moveDef.autoIaiTargetNodeId) then
+        return false
+    end
+
+    standby_attempt.consumed = true
+    runtime_state.lastAutoIaiAt = os.clock()
+    runtime_state.lastForcedSuccessAt = runtime_state.lastAutoIaiAt
+    runtime_state.lastJumpTargetNodeId = config.moveDef.autoIaiTargetNodeId
+
+    runtime_state.activeLongSwordIaiAttempt = create_longsword_iai_attempt(
+        config.moveDef,
+        config.moveState,
+        0,
+        "auto_special_sheathe",
+        standby_attempt.standbyNodeId,
+        standby_attempt.standbyNodeName
+    )
+    runtime_state.nextAttemptId = runtime_state.nextAttemptId + 1
+
+    if not stage_longsword_iai_reward(runtime_state.activeLongSwordIaiAttempt, owner_type, 0, "auto_special_sheathe") then
+        return false
+    end
+
+    runtime_state.activeLongSwordSpecialSheatheAttempt = nil
     return true
 end
 
@@ -716,7 +820,9 @@ local function process_pending_longsword_iai_reward()
         return
     end
 
-    local config = get_longsword_iai_reward_config()
+    local config = pending.sourceTag == "auto_special_sheathe"
+        and get_longsword_iai_move_config()
+        or get_longsword_iai_reward_config()
     if not config then
         clear_longsword_iai_runtime()
         return
@@ -774,14 +880,18 @@ end
 local function refresh_longsword_iai_runtime()
     local weapon_type = get_player_weapon_type()
     local motion_id = get_motion_id()
+    local current_node_id = get_current_node_id()
     local motion_frame = get_motion_frame()
 
     runtime_state.lastKnownWeaponType = weapon_type
     runtime_state.lastKnownMotionId = motion_id
     runtime_state.lastKnownMotionFrame = motion_frame
 
-    local config = get_longsword_iai_reward_config()
-    if not config or weapon_type ~= config.moveDef.resultWeaponType then
+    local move_config = get_longsword_iai_move_config()
+    local reward_config = get_longsword_iai_reward_config()
+    local auto_config = get_longsword_iai_auto_config()
+
+    if not move_config or weapon_type ~= move_config.moveDef.resultWeaponType then
         clear_longsword_iai_runtime()
         return
     end
@@ -793,20 +903,36 @@ local function refresh_longsword_iai_runtime()
 
     local attempt = runtime_state.activeLongSwordIaiAttempt
 
-    if motion_id == config.moveDef.resultMotionId then
+    if reward_config and motion_id == reward_config.moveDef.resultMotionId then
         local should_begin_new_attempt = attempt == nil
             or attempt.motionId ~= motion_id
             or motion_frame < (attempt.lastMotionFrame or 0)
 
         if should_begin_new_attempt then
-            begin_longsword_iai_attempt(config.moveDef, config.moveState, motion_frame)
+            begin_longsword_iai_attempt(reward_config.moveDef, reward_config.moveState, motion_frame)
             attempt = runtime_state.activeLongSwordIaiAttempt
         end
 
-        attempt.windowEnd = config.moveState.value
+        attempt.windowEnd = reward_config.moveState.value
         attempt.lastMotionFrame = motion_frame
-    else
+    elseif not runtime_state.pendingLongSwordIaiReward then
         runtime_state.activeLongSwordIaiAttempt = nil
+    end
+
+    if auto_config and current_node_id == auto_config.moveDef.specialSheatheReadyNodeId then
+        local standby_attempt = runtime_state.activeLongSwordSpecialSheatheAttempt
+        local should_begin_standby_attempt = standby_attempt == nil
+            or standby_attempt.standbyNodeId ~= current_node_id
+            or motion_frame < (standby_attempt.lastMotionFrame or 0)
+
+        if should_begin_standby_attempt then
+            begin_longsword_special_sheathe_attempt(auto_config.moveDef, motion_frame)
+            standby_attempt = runtime_state.activeLongSwordSpecialSheatheAttempt
+        end
+
+        standby_attempt.lastMotionFrame = motion_frame
+    else
+        runtime_state.activeLongSwordSpecialSheatheAttempt = nil
     end
 end
 
@@ -898,6 +1024,18 @@ local function draw_weapon_moves(weapon_def)
                 imgui.text("当前只对太刀居合气刃斩生效。")
             end
 
+            if move_def.autoIaiMode ~= nil then
+                toggle, move_state.autoIaiEnabled = imgui.checkbox(
+                    "特殊纳刀受击时自动出居合（实验）##move_auto_iai_enabled_" .. weapon_def.weaponType .. "_" .. move_def.id,
+                    move_state.autoIaiEnabled
+                )
+                changed = changed or toggle
+
+                imgui.text("当前识别待机节点: atk.atk151.atk_154")
+                imgui.text("命中后会自动推进到 atk.atk151.atk_155。")
+                imgui.text("自动居合会复用同一套成功奖励模拟链。")
+            end
+
             if imgui.button("恢复默认##move_reset_" .. weapon_def.weaponType .. "_" .. move_def.id) then
                 reset_move_state(move_def, move_state)
                 changed = true
@@ -987,16 +1125,32 @@ sdk.hook(
             return retval
         end
 
-        local config = get_longsword_iai_reward_config()
-        local attempt = runtime_state.activeLongSwordIaiAttempt
-        if not config or not attempt or attempt.consumed or runtime_state.pendingLongSwordIaiReward ~= nil then
-            return retval
-        end
-
         local owner_type = safe_call(function()
             return storage["customGpFramesDamageData"]:get_OwnerType()
         end)
         if owner_type == nil or not is_hostile_damage_owner_type(owner_type) then
+            return retval
+        end
+
+        local auto_config = get_longsword_iai_auto_config()
+        local special_sheathe_attempt = runtime_state.activeLongSwordSpecialSheatheAttempt
+        if auto_config and special_sheathe_attempt and not special_sheathe_attempt.consumed then
+            local weapon_type = get_player_weapon_type()
+            local motion_id = get_motion_id()
+            local current_node_id = get_current_node_id()
+
+            if weapon_type == auto_config.moveDef.resultWeaponType
+                and current_node_id == auto_config.moveDef.specialSheatheReadyNodeId
+                and (auto_config.moveDef.specialSheatheReadyMotionId == nil or motion_id == auto_config.moveDef.specialSheatheReadyMotionId)
+                and runtime_state.pendingLongSwordIaiReward == nil
+                and trigger_longsword_special_sheathe_auto_iai(auto_config, owner_type) then
+                return sdk.to_ptr(2)
+            end
+        end
+
+        local config = get_longsword_iai_reward_config()
+        local attempt = runtime_state.activeLongSwordIaiAttempt
+        if not config or not attempt or attempt.consumed or runtime_state.pendingLongSwordIaiReward ~= nil then
             return retval
         end
 

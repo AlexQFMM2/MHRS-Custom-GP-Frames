@@ -29,8 +29,16 @@ local ordered_weapons = {
                 valueMode = "end_frame",
                 rewardSimulationMode = "longsword_iai_full",
                 rewardSimulationEnabledByDefault = false,
+                autoIaiMode = "longsword_special_sheathe_auto_counter",
+                autoIaiEnabledByDefault = false,
                 successNodeId = 2004603551,
                 mrSuccessNodeId = 3569005589,
+                specialSheatheReadyNodeId = 1110077419,
+                specialSheatheReadyNodeName = "atk.atk151.atk_154",
+                specialSheatheReadyMotionId = 154,
+                autoIaiTargetNodeId = 3716128725,
+                autoIaiTargetNodeName = "atk.atk151.atk_155",
+                autoIaiTargetMotionId = 155,
                 resultMotionId = 155,
                 resultWeaponType = 2,
                 sliderLabel = "GP结束帧",
@@ -39,7 +47,7 @@ local ordered_weapons = {
                 default = 18,
                 enabledByDefault = false,
                 modeHint = "直接覆盖 PlayerFsm2ActionSeeThroughAttack 的 _EndFrame",
-                description = "当前已确认条目：来自 longsword dump 与 Endless Longsword 参考实现，对应居合气刃斩成功窗口。默认原值为 18。可额外开启“成功奖励模拟”实验功能，尝试把成功链一起补上。"
+                description = "当前已确认条目：来自 longsword dump 与 Endless Longsword 参考实现，对应居合气刃斩成功窗口。默认原值为 18。可额外开启“成功奖励模拟”和“特殊纳刀自动居合”实验功能。"
             }
         }
     },
