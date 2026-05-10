@@ -31,7 +31,7 @@ local ordered_weapons = defs.ordered_weapons
 local weapon_by_type = defs.weapon_by_type
 local weapon_combo_labels = defs.weapon_combo_labels
 local general_weapon_type = "general"
-local default_selected_weapon = general_weapon_type
+local default_selected_weapon = ordered_weapons[1] and ordered_weapons[1].weaponType or general_weapon_type
 
 -- 默认配置现在不再暴露 ActionIndex 给用户，而是按“武器 -> 招式”组织。
 local default_settings = {
@@ -1429,7 +1429,7 @@ end
 -- 顶层 UI：
 -- 1. 总开关
 -- 2. 当前装备武器提示
--- 3. 14 把武器下拉选择
+-- 3. 当前已支持修改的武器下拉选择
 -- 4. 该武器下已录入招式的滑条
 re.on_draw_ui(function()
     local changed = false
@@ -1465,10 +1465,6 @@ re.on_draw_ui(function()
         if selected_weapon_def ~= nil then
             imgui.text("当前编辑: " .. selected_weapon_def.weaponName)
             changed = draw_weapon_moves(selected_weapon_def) or changed
-        end
-
-        if imgui.button("保存配置") then
-            save_settings()
         end
 
         if has_custom_font then

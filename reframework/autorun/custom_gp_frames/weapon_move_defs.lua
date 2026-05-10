@@ -4,21 +4,6 @@
 
 local ordered_weapons = {
     {
-        weaponType = "general",
-        weaponName = "通用动作",
-        moves = {}
-    },
-    {
-        weaponType = 0,
-        weaponName = "大剑",
-        moves = {}
-    },
-    {
-        weaponType = 1,
-        weaponName = "斩斧",
-        moves = {}
-    },
-    {
         weaponType = 2,
         weaponName = "太刀",
         moves = {
@@ -53,26 +38,6 @@ local ordered_weapons = {
         }
     },
     {
-        weaponType = 3,
-        weaponName = "轻弩",
-        moves = {}
-    },
-    {
-        weaponType = 4,
-        weaponName = "重弩",
-        moves = {}
-    },
-    {
-        weaponType = 5,
-        weaponName = "大锤",
-        moves = {}
-    },
-    {
-        weaponType = 6,
-        weaponName = "铳枪",
-        moves = {}
-    },
-    {
         weaponType = 7,
         weaponName = "长枪",
         moves = {
@@ -94,31 +59,6 @@ local ordered_weapons = {
                 description = "当前示例来自参考项目 ComboLance：这里把长枪精准防御的 action 结束帧暴露成滑条。"
             }
         }
-    },
-    {
-        weaponType = 8,
-        weaponName = "片手剑",
-        moves = {}
-    },
-    {
-        weaponType = 9,
-        weaponName = "双刀",
-        moves = {}
-    },
-    {
-        weaponType = 10,
-        weaponName = "狩猎笛",
-        moves = {}
-    },
-    {
-        weaponType = 11,
-        weaponName = "盾斧",
-        moves = {}
-    },
-    {
-        weaponType = 12,
-        weaponName = "操虫棍",
-        moves = {}
     },
     {
         weaponType = 13,
