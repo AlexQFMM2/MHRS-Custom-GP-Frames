@@ -1146,7 +1146,7 @@ local function draw_weapon_moves(weapon_def)
                 )
                 changed = changed or toggle
 
-                imgui.text("当前识别待机节点: atk.atk151.atk_154")
+                imgui.text("当前识别待机节点: atk.atk151.atk_152")
                 imgui.text("命中后会自动推进到 atk.atk151.atk_155。")
                 imgui.text("自动居合会复用同一套成功奖励模拟链。")
                 draw_longsword_iai_debug_ui(move_def)
