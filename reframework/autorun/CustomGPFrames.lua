@@ -69,6 +69,7 @@ local runtime_state = {
     currentActionBank = nil,
     cachedBehaviorTree = nil,
     cachedTreeObject = nil,
+    nodeNameById = {},
     autoDefenseState = {},
     nextAttemptId = 1
 }
@@ -149,11 +150,21 @@ local function get_tree_object()
 end
 
 local function get_cached_behavior_tree()
-    return runtime_state.cachedBehaviorTree or get_behavior_tree()
+    if runtime_state.cachedBehaviorTree ~= nil then
+        return runtime_state.cachedBehaviorTree
+    end
+
+    runtime_state.cachedBehaviorTree = get_behavior_tree()
+    return runtime_state.cachedBehaviorTree
 end
 
 local function get_cached_tree_object()
-    return runtime_state.cachedTreeObject or get_tree_object()
+    if runtime_state.cachedTreeObject ~= nil then
+        return runtime_state.cachedTreeObject
+    end
+
+    runtime_state.cachedTreeObject = get_tree_object()
+    return runtime_state.cachedTreeObject
 end
 
 -- 读取当前装备武器类型。
@@ -275,7 +286,21 @@ local function get_node_name_from_tree(tree, node_id)
 end
 
 local function get_node_name_by_id(node_id)
-    return get_node_name_from_tree(get_cached_tree_object(), node_id)
+    if not node_id then
+        return nil
+    end
+
+    local cached_name = runtime_state.nodeNameById[node_id]
+    if cached_name ~= nil then
+        return cached_name
+    end
+
+    local node_name = get_node_name_from_tree(get_cached_tree_object(), node_id)
+    if node_name ~= nil then
+        runtime_state.nodeNameById[node_id] = node_name
+    end
+
+    return node_name
 end
 
 local function get_current_node_name()
@@ -789,6 +814,28 @@ local function get_auto_defense_cooldown(weapon_type)
     return 0.0
 end
 
+local function has_enabled_auto_features(weapon_type)
+    if not settings.modEnabled then
+        return false
+    end
+
+    if weapon_type == 13 then
+        return get_bow_dodgebolt_auto_config() ~= nil
+    end
+
+    if weapon_type == 7 then
+        return get_lance_instant_block_auto_config() ~= nil
+    end
+
+    if weapon_type == 2 then
+        return get_longsword_iai_auto_config() ~= nil
+            or get_longsword_iai_reward_config() ~= nil
+            or get_longsword_iai_move_config() ~= nil
+    end
+
+    return false
+end
+
 local function get_auto_defense_state(weapon_type)
     if runtime_state.autoDefenseState[weapon_type] == nil then
         runtime_state.autoDefenseState[weapon_type] = {
@@ -842,8 +889,30 @@ end
 local function refresh_runtime_cache()
     -- 把“当前武器 / 动作 / 节点 / 行为树”改成平时维护、受击时只读。
     -- 这样真正挨打的瞬间就不用再重复层层取对象了。
+    local weapon_type = get_player_weapon_type()
+    local should_refresh_longsword = weapon_type == 2 and (
+        get_longsword_iai_move_config() ~= nil
+        or runtime_state.pendingLongSwordIaiReward ~= nil
+        or runtime_state.activeLongSwordIaiAttempt ~= nil
+        or runtime_state.activeLongSwordSpecialSheatheAttempt ~= nil
+    )
+    local should_refresh_lance = weapon_type == 7 and get_lance_instant_block_auto_config() ~= nil
+    local should_read_behavior_tree = should_refresh_longsword
+        or (should_refresh_lance and runtime_state.currentActionBank == 100)
+
+    runtime_state.cachedBehaviorTree = nil
+    runtime_state.cachedTreeObject = nil
+    runtime_state.lastKnownWeaponType = weapon_type
+    runtime_state.lastKnownMotionId = nil
+    runtime_state.lastKnownMotionFrame = nil
+    runtime_state.lastKnownNodeId = nil
+    runtime_state.lastKnownNodeName = nil
+
+    if not should_read_behavior_tree then
+        return
+    end
+
     local behavior_tree = get_behavior_tree()
-    local tree_object = nil
     local current_node_id = nil
 
     if behavior_tree then
@@ -852,17 +921,17 @@ local function refresh_runtime_cache()
         end)
     end
 
-    if current_node_id ~= nil then
-        tree_object = get_tree_object()
+    runtime_state.cachedBehaviorTree = behavior_tree
+    runtime_state.lastKnownNodeId = current_node_id
+
+    if should_refresh_longsword then
+        runtime_state.lastKnownMotionId = get_motion_id()
+        runtime_state.lastKnownMotionFrame = get_motion_frame()
     end
 
-    runtime_state.cachedBehaviorTree = behavior_tree
-    runtime_state.cachedTreeObject = tree_object
-    runtime_state.lastKnownWeaponType = get_player_weapon_type()
-    runtime_state.lastKnownMotionId = get_motion_id()
-    runtime_state.lastKnownMotionFrame = get_motion_frame()
-    runtime_state.lastKnownNodeId = current_node_id
-    runtime_state.lastKnownNodeName = get_node_name_from_tree(tree_object, current_node_id)
+    if should_refresh_lance and runtime_state.currentActionBank == 100 and current_node_id ~= nil then
+        runtime_state.lastKnownNodeName = get_node_name_by_id(current_node_id)
+    end
 end
 
 local function create_longsword_iai_attempt(move_def, move_state, motion_frame, source_tag, started_node_id, started_node_name)
@@ -959,13 +1028,10 @@ sdk.hook(
             return
         end
 
-        local weapon_type = get_player_weapon_type()
-        local should_track_action = false
-        if weapon_type == 13 then
-            should_track_action = get_bow_dodgebolt_auto_config() ~= nil
-        elseif weapon_type == 7 then
-            should_track_action = get_lance_instant_block_auto_config() ~= nil
-        end
+        local weapon_type = runtime_state.lastKnownWeaponType or get_player_weapon_type()
+        local should_track_action = weapon_type ~= nil
+            and (weapon_type == 13 or weapon_type == 7)
+            and has_enabled_auto_features(weapon_type)
 
         if not should_track_action then
             runtime_state.currentActionId = nil
@@ -1273,8 +1339,16 @@ end
 re.on_frame(function()
     apply_custom_gp_frames()
     refresh_runtime_cache()
-    refresh_longsword_iai_runtime()
-    process_pending_longsword_iai_reward()
+
+    local should_run_longsword_runtime = runtime_state.lastKnownWeaponType == 2
+        or runtime_state.pendingLongSwordIaiReward ~= nil
+        or runtime_state.activeLongSwordIaiAttempt ~= nil
+        or runtime_state.activeLongSwordSpecialSheatheAttempt ~= nil
+
+    if should_run_longsword_runtime then
+        refresh_longsword_iai_runtime()
+        process_pending_longsword_iai_reward()
+    end
 end)
 
 -- 把武器类型转成 combo 需要的下标。
