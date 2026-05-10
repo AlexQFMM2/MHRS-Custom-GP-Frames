@@ -27,13 +27,19 @@ local ordered_weapons = {
                 label = "居合气刃斩",
                 actionIndex = 9250,
                 valueMode = "end_frame",
+                rewardSimulationMode = "longsword_iai_full",
+                rewardSimulationEnabledByDefault = false,
+                successNodeId = 2004603551,
+                mrSuccessNodeId = 3569005589,
+                resultMotionId = 155,
+                resultWeaponType = 2,
                 sliderLabel = "GP结束帧",
                 min = 0,
                 max = 120,
                 default = 18,
                 enabledByDefault = false,
                 modeHint = "直接覆盖 PlayerFsm2ActionSeeThroughAttack 的 _EndFrame",
-                description = "当前已确认条目：来自 longsword dump 与 Endless Longsword 参考实现，对应居合气刃斩成功窗口。默认原值为 18。"
+                description = "当前已确认条目：来自 longsword dump 与 Endless Longsword 参考实现，对应居合气刃斩成功窗口。默认原值为 18。可额外开启“成功奖励模拟”实验功能，尝试把成功链一起补上。"
             }
         }
     },

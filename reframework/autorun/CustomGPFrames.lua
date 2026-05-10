@@ -45,6 +45,37 @@ local settings = json.load_file(config_path) or default_settings
 -- 记录本次会话里被改过的 action 原始值，方便在关闭时恢复。
 local original_frames = {}
 
+-- 太刀居合成功奖励模拟的运行时状态。
+-- 这里不做全武器泛化，只服务当前的太刀居合实验功能。
+local runtime_state = {
+    activeLongSwordIaiAttempt = nil,
+    pendingLongSwordIaiReward = nil,
+    lastProcessedDamageTick = nil,
+    lastForcedSuccessAt = nil,
+    lastJumpTargetNodeId = nil,
+    lastKnownMotionId = nil,
+    lastKnownMotionFrame = nil,
+    lastKnownWeaponType = nil,
+    nextAttemptId = 1
+}
+
+local longsword_iai_reward_action_types = {
+    ["snow.player.fsm.PlayerFsm2ActionLongSwordSuccessIaiCounter"] = true,
+    ["snow.player.fsm.PlayerFsm2ActionLongSwordSetCounterSuccessMotionSpeed"] = true,
+    ["snow.player.fsm.PlayerFsm2ActionLongSwordSubGauge"] = true
+}
+
+local longsword_max_gauge_level = 3
+
+local function safe_call(fn)
+    local ok, result = pcall(fn)
+    if ok then
+        return result
+    end
+
+    return nil
+end
+
 local function get_display_language()
     local option_manager = sdk.get_managed_singleton("snow.gui.OptionManager")
     if not option_manager then
@@ -64,14 +95,27 @@ local function get_master_player()
     return player_manager:call("findMasterPlayer")
 end
 
--- 从玩家对象一路拿到当前正在使用的动作树。
-local function get_tree_object()
+local function get_master_player_game_object()
     local master_player = get_master_player()
     if not master_player then
         return nil
     end
 
-    local player_game_object = master_player:call("get_GameObject")
+    return master_player:call("get_GameObject")
+end
+
+local function get_behavior_tree()
+    local player_game_object = get_master_player_game_object()
+    if not player_game_object then
+        return nil
+    end
+
+    return player_game_object:call("getComponent(System.Type)", sdk.typeof("via.behaviortree.BehaviorTree"))
+end
+
+-- 从玩家对象一路拿到当前正在使用的动作树。
+local function get_tree_object()
+    local player_game_object = get_master_player_game_object()
     if not player_game_object then
         return nil
     end
@@ -97,6 +141,113 @@ local function get_player_weapon_type()
     end
 
     return master_player:get_field("_playerWeaponType")
+end
+
+local function get_motion_id()
+    local master_player = get_master_player()
+    if not master_player then
+        return nil
+    end
+
+    return safe_call(function()
+        return master_player:call("getMotionID_Layer(System.Int32)", 0)
+    end)
+end
+
+local function get_motion_frame()
+    local master_player = get_master_player()
+    if not master_player then
+        return nil
+    end
+
+    return safe_call(function()
+        return math.floor(master_player:call("getMotionNowFrame_Layer(System.Int32)", 0))
+    end)
+end
+
+local function get_current_node_id()
+    local behavior_tree = get_behavior_tree()
+    if not behavior_tree then
+        return nil
+    end
+
+    return safe_call(function()
+        return behavior_tree:call("getCurrentNodeID", 0)
+    end)
+end
+
+local function get_node_name_by_id(node_id)
+    local tree = get_tree_object()
+    if not tree or not node_id then
+        return nil
+    end
+
+    local node = safe_call(function()
+        return tree:get_node_by_id(node_id)
+    end)
+    if not node then
+        return nil
+    end
+
+    return safe_call(function()
+        return node:get_full_name()
+    end)
+end
+
+local function get_current_node_name()
+    return get_node_name_by_id(get_current_node_id())
+end
+
+local function get_current_node_action_type_names()
+    local tree = get_tree_object()
+    local node_id = get_current_node_id()
+    if not tree or not node_id then
+        return {}
+    end
+
+    local node = safe_call(function()
+        return tree:get_node_by_id(node_id)
+    end)
+    if not node then
+        return {}
+    end
+
+    local node_data = safe_call(function()
+        return node:get_data()
+    end)
+    if not node_data then
+        return {}
+    end
+
+    local node_actions = safe_call(function()
+        return node_data:get_actions()
+    end)
+    if not node_actions then
+        return {}
+    end
+
+    local actions = safe_call(function()
+        return tree:get_actions()
+    end)
+    if not actions then
+        return {}
+    end
+
+    local result = {}
+    for i = 0, node_actions:size() - 1 do
+        local action_index = tonumber(node_actions[i])
+        local action_obj = actions[action_index]
+        if action_obj then
+            local type_name = safe_call(function()
+                return action_obj:get_type_definition():get_full_name()
+            end)
+            if type_name then
+                table.insert(result, type_name)
+            end
+        end
+    end
+
+    return result
 end
 
 -- 按 ActionIndex 从全局 action 数组中取对象。
@@ -156,6 +307,10 @@ local function ensure_move_state(weapon_type, move_def)
 
     if move_state.value == nil then
         move_state.value = move_def.default
+    end
+
+    if move_def.rewardSimulationMode ~= nil and move_state.rewardSimulationEnabled == nil then
+        move_state.rewardSimulationEnabled = move_def.rewardSimulationEnabledByDefault or false
     end
 
     return move_state
@@ -286,6 +441,354 @@ end
 local function reset_move_state(move_def, move_state)
     move_state.enabled = move_def.enabledByDefault or false
     move_state.value = move_def.default
+
+    if move_def.rewardSimulationMode ~= nil then
+        move_state.rewardSimulationEnabled = move_def.rewardSimulationEnabledByDefault or false
+    end
+end
+
+local function find_move_definition(weapon_type, move_id)
+    local weapon_def = weapon_by_type[weapon_type]
+    if not weapon_def then
+        return nil
+    end
+
+    for _, move_def in ipairs(weapon_def.moves) do
+        if move_def.id == move_id then
+            return move_def
+        end
+    end
+
+    return nil
+end
+
+local function get_longsword_iai_reward_config()
+    local move_def = find_move_definition(2, "iai_spirit_slash_counter")
+    if not move_def then
+        return nil
+    end
+
+    local move_state = ensure_move_state(2, move_def)
+    if not settings.modEnabled or not move_state.enabled or not move_state.rewardSimulationEnabled then
+        return nil
+    end
+
+    return {
+        moveDef = move_def,
+        moveState = move_state
+    }
+end
+
+local function get_longsword_gauge_level()
+    local master_player = get_master_player()
+    if not master_player then
+        return nil
+    end
+
+    return safe_call(function()
+        return master_player:call("get_LongSwordGaugeLv")
+    end)
+end
+
+local function set_longsword_gauge_level(value)
+    local master_player = get_master_player()
+    if not master_player then
+        return false
+    end
+
+    local result = safe_call(function()
+        return master_player:call("set_LongSwordGaugeLv", value)
+    end)
+
+    return result ~= nil
+end
+
+local function get_longsword_gauge()
+    local master_player = get_master_player()
+    if not master_player then
+        return nil
+    end
+
+    return safe_call(function()
+        return master_player:get_field("_LongSwordGauge")
+    end)
+end
+
+local function set_longsword_gauge(value)
+    local master_player = get_master_player()
+    if not master_player then
+        return false
+    end
+
+    local ok = safe_call(function()
+        master_player:set_field("_LongSwordGauge", value)
+        return true
+    end)
+
+    return ok == true
+end
+
+local function get_longsword_gauge_level_timer()
+    local master_player = get_master_player()
+    if not master_player then
+        return nil
+    end
+
+    return safe_call(function()
+        return master_player:get_field("_LongSwordGaugeLvTimer")
+    end)
+end
+
+local function set_longsword_gauge_level_timer(value)
+    local master_player = get_master_player()
+    if not master_player then
+        return false
+    end
+
+    local ok = safe_call(function()
+        master_player:set_field("_LongSwordGaugeLvTimer", value)
+        return true
+    end)
+
+    return ok == true
+end
+
+local function get_longsword_gauge_level_time()
+    local master_player = get_master_player()
+    if not master_player then
+        return nil
+    end
+
+    return safe_call(function()
+        return master_player:get_field("_LongSwordGaugeLvTime")
+    end)
+end
+
+local function clear_longsword_iai_runtime()
+    runtime_state.activeLongSwordIaiAttempt = nil
+    runtime_state.pendingLongSwordIaiReward = nil
+    runtime_state.lastProcessedDamageTick = nil
+    runtime_state.lastForcedSuccessAt = nil
+    runtime_state.lastJumpTargetNodeId = nil
+end
+
+local function begin_longsword_iai_attempt(move_def, move_state, motion_frame)
+    runtime_state.activeLongSwordIaiAttempt = {
+        attemptId = runtime_state.nextAttemptId,
+        motionId = move_def.resultMotionId,
+        resultWeaponType = move_def.resultWeaponType,
+        successNodeId = move_def.successNodeId,
+        mrSuccessNodeId = move_def.mrSuccessNodeId,
+        windowStart = 0,
+        windowEnd = move_state.value,
+        consumed = false,
+        rewardResolved = false,
+        manualFallbackReward = false,
+        lastMotionFrame = motion_frame,
+        createdMotionFrame = motion_frame,
+        startedNodeId = get_current_node_id(),
+        startedNodeName = get_current_node_name()
+    }
+    runtime_state.nextAttemptId = runtime_state.nextAttemptId + 1
+end
+
+local function is_hostile_damage_owner_type(owner_type)
+    return owner_type == 0 or owner_type == 1 or owner_type == 2
+end
+
+local function try_jump_to_node(node_id)
+    local behavior_tree = get_behavior_tree()
+    if not behavior_tree or not node_id then
+        return false
+    end
+
+    local ok = safe_call(function()
+        behavior_tree:call(
+            "setCurrentNode(System.UInt64, System.UInt32, via.behaviortree.SetNodeInfo)",
+            node_id,
+            nil,
+            nil
+        )
+        return true
+    end)
+
+    return ok == true
+end
+
+local function queue_longsword_iai_reward(owner_type)
+    local attempt = runtime_state.activeLongSwordIaiAttempt
+    if not attempt or attempt.consumed then
+        return false
+    end
+
+    attempt.consumed = true
+
+    local motion_frame = get_motion_frame() or -1
+    runtime_state.lastProcessedDamageTick = tostring(attempt.attemptId) .. ":" .. tostring(motion_frame) .. ":" .. tostring(owner_type)
+    runtime_state.pendingLongSwordIaiReward = {
+        attemptId = attempt.attemptId,
+        ownerType = owner_type,
+        gaugeLvBefore = get_longsword_gauge_level(),
+        gaugeBefore = get_longsword_gauge(),
+        validationFramesRemaining = 2,
+        jumpAttempted = false,
+        jumpTargetNodeId = nil,
+        attackSideObserved = false,
+        attackSideNodeId = nil,
+        attackSideMotionId = nil,
+        successSignalSeen = false,
+        manualFallbackReward = false
+    }
+
+    return true
+end
+
+local function mark_longsword_iai_reward_resolved(manual_fallback)
+    local pending = runtime_state.pendingLongSwordIaiReward
+    if pending then
+        pending.successSignalSeen = true
+        pending.manualFallbackReward = manual_fallback == true
+    end
+
+    local attempt = runtime_state.activeLongSwordIaiAttempt
+    if attempt and pending and attempt.attemptId == pending.attemptId then
+        attempt.rewardResolved = true
+        attempt.manualFallbackReward = manual_fallback == true
+    end
+
+    runtime_state.pendingLongSwordIaiReward = nil
+end
+
+local function apply_manual_longsword_iai_reward(pending)
+    if not pending then
+        return false
+    end
+
+    local gauge_level_before = get_longsword_gauge_level()
+    if gauge_level_before ~= nil and gauge_level_before < longsword_max_gauge_level then
+        set_longsword_gauge_level(gauge_level_before + 1)
+    end
+
+    local current_timer = get_longsword_gauge_level_timer()
+    local base_timer = get_longsword_gauge_level_time()
+    local target_timer = base_timer or current_timer or 300.0
+    if type(target_timer) ~= "number" or target_timer < 1.0 then
+        target_timer = 300.0
+    end
+    set_longsword_gauge_level_timer(target_timer)
+
+    local current_gauge = get_longsword_gauge()
+    local gauge_floor = pending.gaugeBefore
+    if type(current_gauge) == "number" and type(gauge_floor) == "number" and current_gauge < gauge_floor then
+        set_longsword_gauge(gauge_floor)
+    end
+
+    mark_longsword_iai_reward_resolved(true)
+    return true
+end
+
+local function has_longsword_iai_success_signal(pending, move_def)
+    local current_node_id = get_current_node_id()
+    if current_node_id == move_def.mrSuccessNodeId or current_node_id == move_def.successNodeId then
+        return true
+    end
+
+    for _, type_name in ipairs(get_current_node_action_type_names()) do
+        if longsword_iai_reward_action_types[type_name] then
+            return true
+        end
+    end
+
+    local current_gauge_lv = get_longsword_gauge_level()
+    if pending.gaugeLvBefore ~= nil and current_gauge_lv ~= nil and current_gauge_lv > pending.gaugeLvBefore then
+        return true
+    end
+
+    return false
+end
+
+local function process_pending_longsword_iai_reward()
+    local pending = runtime_state.pendingLongSwordIaiReward
+    if not pending then
+        return
+    end
+
+    local config = get_longsword_iai_reward_config()
+    if not config then
+        clear_longsword_iai_runtime()
+        return
+    end
+
+    if not pending.jumpAttempted then
+        local jumped = false
+
+        if try_jump_to_node(config.moveDef.mrSuccessNodeId) then
+            pending.jumpTargetNodeId = config.moveDef.mrSuccessNodeId
+            jumped = true
+        elseif try_jump_to_node(config.moveDef.successNodeId) then
+            pending.jumpTargetNodeId = config.moveDef.successNodeId
+            jumped = true
+        end
+
+        pending.jumpAttempted = true
+        runtime_state.lastForcedSuccessAt = os.clock()
+        runtime_state.lastJumpTargetNodeId = pending.jumpTargetNodeId
+
+        if not jumped then
+            apply_manual_longsword_iai_reward(pending)
+        end
+
+        return
+    end
+
+    if has_longsword_iai_success_signal(pending, config.moveDef) then
+        mark_longsword_iai_reward_resolved(false)
+        return
+    end
+
+    pending.validationFramesRemaining = pending.validationFramesRemaining - 1
+    if pending.validationFramesRemaining <= 0 then
+        apply_manual_longsword_iai_reward(pending)
+    end
+end
+
+local function refresh_longsword_iai_runtime()
+    local weapon_type = get_player_weapon_type()
+    local motion_id = get_motion_id()
+    local motion_frame = get_motion_frame()
+
+    runtime_state.lastKnownWeaponType = weapon_type
+    runtime_state.lastKnownMotionId = motion_id
+    runtime_state.lastKnownMotionFrame = motion_frame
+
+    local config = get_longsword_iai_reward_config()
+    if not config or weapon_type ~= config.moveDef.resultWeaponType then
+        clear_longsword_iai_runtime()
+        return
+    end
+
+    if motion_id == nil or motion_frame == nil then
+        clear_longsword_iai_runtime()
+        return
+    end
+
+    local attempt = runtime_state.activeLongSwordIaiAttempt
+
+    if motion_id == config.moveDef.resultMotionId then
+        local should_begin_new_attempt = attempt == nil
+            or attempt.motionId ~= motion_id
+            or motion_frame < (attempt.lastMotionFrame or 0)
+
+        if should_begin_new_attempt then
+            begin_longsword_iai_attempt(config.moveDef, config.moveState, motion_frame)
+            attempt = runtime_state.activeLongSwordIaiAttempt
+        end
+
+        attempt.windowEnd = config.moveState.value
+        attempt.lastMotionFrame = motion_frame
+    else
+        runtime_state.activeLongSwordIaiAttempt = nil
+    end
 end
 
 -- 每帧应用一次当前武器对应的覆盖配置。
@@ -321,6 +824,8 @@ end
 
 re.on_frame(function()
     apply_custom_gp_frames()
+    refresh_longsword_iai_runtime()
+    process_pending_longsword_iai_reward()
 end)
 
 -- 把武器类型转成 combo 需要的下标。
@@ -361,6 +866,18 @@ local function draw_weapon_moves(weapon_def)
                 move_def.max
             )
             changed = changed or toggle
+
+            if move_def.rewardSimulationMode ~= nil then
+                toggle, move_state.rewardSimulationEnabled = imgui.checkbox(
+                    "模拟居合成功奖励##move_reward_enabled_" .. weapon_def.weaponType .. "_" .. move_def.id,
+                    move_state.rewardSimulationEnabled
+                )
+                changed = changed or toggle
+
+                imgui.text("强制走成功分支（实验）")
+                imgui.text("风险提示：可能与其他太刀反击/派生 mod 冲突。")
+                imgui.text("当前只对太刀居合气刃斩生效。")
+            end
 
             if imgui.button("恢复默认##move_reset_" .. weapon_def.weaponType .. "_" .. move_def.id) then
                 reset_move_state(move_def, move_state)
@@ -433,3 +950,71 @@ re.on_draw_ui(function()
         save_settings()
     end
 end)
+
+sdk.hook(
+    sdk.find_type_definition("snow.player.PlayerQuestBase"):get_method("checkCalcDamage_DamageSide"),
+    function(args)
+        local storage = thread.get_hook_storage()
+        storage["customGpFramesPlayer"] = sdk.to_managed_object(args[2])
+
+        local hit_info = sdk.to_managed_object(args[3])
+        storage["customGpFramesHitInfo"] = hit_info
+        storage["customGpFramesDamageData"] = hit_info and hit_info:get_AttackData() or nil
+    end,
+    function(retval)
+        local storage = thread.get_hook_storage()
+        local player = storage["customGpFramesPlayer"]
+        if not player or not player:isMasterPlayer() then
+            return retval
+        end
+
+        local config = get_longsword_iai_reward_config()
+        local attempt = runtime_state.activeLongSwordIaiAttempt
+        if not config or not attempt or attempt.consumed or runtime_state.pendingLongSwordIaiReward ~= nil then
+            return retval
+        end
+
+        local owner_type = safe_call(function()
+            return storage["customGpFramesDamageData"]:get_OwnerType()
+        end)
+        if owner_type == nil or not is_hostile_damage_owner_type(owner_type) then
+            return retval
+        end
+
+        local weapon_type = get_player_weapon_type()
+        local motion_id = get_motion_id()
+        local motion_frame = get_motion_frame()
+        if weapon_type ~= config.moveDef.resultWeaponType or motion_id ~= config.moveDef.resultMotionId or motion_frame == nil then
+            return retval
+        end
+
+        if motion_frame < 0 or motion_frame > config.moveState.value then
+            return retval
+        end
+
+        if queue_longsword_iai_reward(owner_type) then
+            return sdk.to_ptr(2)
+        end
+
+        return retval
+    end
+)
+
+sdk.hook(
+    sdk.find_type_definition("snow.player.PlayerQuestBase"):get_method("afterCalcDamage_AttackSide"),
+    function(args)
+        local player = sdk.to_managed_object(args[2])
+        if not player or not player:isMasterPlayer() then
+            return
+        end
+
+        local pending = runtime_state.pendingLongSwordIaiReward
+        if not pending then
+            return
+        end
+
+        pending.attackSideObserved = true
+        pending.attackSideNodeId = get_current_node_id()
+        pending.attackSideMotionId = get_motion_id()
+    end
+)
