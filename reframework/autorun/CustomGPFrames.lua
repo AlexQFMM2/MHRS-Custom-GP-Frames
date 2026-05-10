@@ -44,6 +44,11 @@ local settings = json.load_file(config_path) or default_settings
 
 -- 记录本次会话里被改过的 action 原始值，方便在关闭时恢复。
 local original_frames = {}
+-- 自动闪身 / 自动精准防御在受击钩子里可能被连续重入。
+-- 这里给自动触发类功能各自留一个很短的防抖冷却，优先压掉瞬时重复跳节点造成的掉帧。
+local bow_auto_defense_cooldown = 0.10
+local lance_auto_defense_cooldown = 0.06
+local longsword_auto_iai_cooldown = 0.10
 
 -- 太刀居合成功奖励模拟的运行时状态。
 -- 这里不做全武器泛化，只服务当前的太刀居合实验功能。
@@ -62,6 +67,9 @@ local runtime_state = {
     lastKnownNodeName = nil,
     currentActionId = nil,
     currentActionBank = nil,
+    cachedBehaviorTree = nil,
+    cachedTreeObject = nil,
+    autoDefenseState = {},
     nextAttemptId = 1
 }
 
@@ -138,6 +146,14 @@ local function get_tree_object()
     end
 
     return layer:get_tree_object()
+end
+
+local function get_cached_behavior_tree()
+    return runtime_state.cachedBehaviorTree or get_behavior_tree()
+end
+
+local function get_cached_tree_object()
+    return runtime_state.cachedTreeObject or get_tree_object()
 end
 
 -- 读取当前装备武器类型。
@@ -227,18 +243,21 @@ local function is_lance_auto_instant_block_window()
 end
 
 local function get_current_node_id()
-    local behavior_tree = get_behavior_tree()
-    if not behavior_tree then
-        return nil
+    local behavior_tree = get_cached_behavior_tree()
+    if behavior_tree then
+        local node_id = safe_call(function()
+            return behavior_tree:call("getCurrentNodeID", 0)
+        end)
+
+        if node_id ~= nil then
+            return node_id
+        end
     end
 
-    return safe_call(function()
-        return behavior_tree:call("getCurrentNodeID", 0)
-    end)
+    return runtime_state.lastKnownNodeId
 end
 
-local function get_node_name_by_id(node_id)
-    local tree = get_tree_object()
+local function get_node_name_from_tree(tree, node_id)
     if not tree or not node_id then
         return nil
     end
@@ -255,12 +274,21 @@ local function get_node_name_by_id(node_id)
     end)
 end
 
+local function get_node_name_by_id(node_id)
+    return get_node_name_from_tree(get_cached_tree_object(), node_id)
+end
+
 local function get_current_node_name()
-    return get_node_name_by_id(get_current_node_id())
+    local node_name = get_node_name_by_id(get_current_node_id())
+    if node_name ~= nil then
+        return node_name
+    end
+
+    return runtime_state.lastKnownNodeName
 end
 
 local function get_current_node_action_type_names()
-    local tree = get_tree_object()
+    local tree = get_cached_tree_object()
     local node_id = get_current_node_id()
     if not tree or not node_id then
         return {}
@@ -745,6 +773,98 @@ local function clear_longsword_iai_runtime()
     runtime_state.lastAutoIaiAt = nil
 end
 
+local function get_auto_defense_cooldown(weapon_type)
+    if weapon_type == 13 then
+        return bow_auto_defense_cooldown
+    end
+
+    if weapon_type == 7 then
+        return lance_auto_defense_cooldown
+    end
+
+    if weapon_type == 2 then
+        return longsword_auto_iai_cooldown
+    end
+
+    return 0.0
+end
+
+local function get_auto_defense_state(weapon_type)
+    if runtime_state.autoDefenseState[weapon_type] == nil then
+        runtime_state.autoDefenseState[weapon_type] = {
+            lastTriggeredAt = nil,
+            lastSignature = nil,
+            lastJumpTargetNodeId = nil
+        }
+    end
+
+    return runtime_state.autoDefenseState[weapon_type]
+end
+
+local function build_auto_defense_signature(weapon_type, owner_type, damage_flow_type)
+    return table.concat({
+        tostring(weapon_type or -1),
+        tostring(owner_type or -1),
+        tostring(damage_flow_type or -1),
+        tostring(runtime_state.currentActionBank or -1),
+        tostring(runtime_state.currentActionId or -1),
+        tostring(runtime_state.lastKnownMotionId or -1),
+        tostring(runtime_state.lastKnownMotionFrame or -1),
+        tostring(runtime_state.lastKnownNodeId or -1)
+    }, ":")
+end
+
+local function can_trigger_auto_defense(weapon_type, signature)
+    local state = get_auto_defense_state(weapon_type)
+    local now = os.clock()
+    local cooldown = get_auto_defense_cooldown(weapon_type)
+
+    -- 同一次受击链里，怪物的判定可能在极短时间内多次进入 hook。
+    -- 这里只要还在冷却窗里，就直接拒绝再次自动跳转。
+    if state.lastTriggeredAt ~= nil and (now - state.lastTriggeredAt) < cooldown then
+        if state.lastSignature == signature then
+            return false
+        end
+
+        return false
+    end
+
+    return true
+end
+
+local function mark_auto_defense_triggered(weapon_type, signature, node_id)
+    local state = get_auto_defense_state(weapon_type)
+    state.lastTriggeredAt = os.clock()
+    state.lastSignature = signature
+    state.lastJumpTargetNodeId = node_id
+end
+
+local function refresh_runtime_cache()
+    -- 把“当前武器 / 动作 / 节点 / 行为树”改成平时维护、受击时只读。
+    -- 这样真正挨打的瞬间就不用再重复层层取对象了。
+    local behavior_tree = get_behavior_tree()
+    local tree_object = nil
+    local current_node_id = nil
+
+    if behavior_tree then
+        current_node_id = safe_call(function()
+            return behavior_tree:call("getCurrentNodeID", 0)
+        end)
+    end
+
+    if current_node_id ~= nil then
+        tree_object = get_tree_object()
+    end
+
+    runtime_state.cachedBehaviorTree = behavior_tree
+    runtime_state.cachedTreeObject = tree_object
+    runtime_state.lastKnownWeaponType = get_player_weapon_type()
+    runtime_state.lastKnownMotionId = get_motion_id()
+    runtime_state.lastKnownMotionFrame = get_motion_frame()
+    runtime_state.lastKnownNodeId = current_node_id
+    runtime_state.lastKnownNodeName = get_node_name_from_tree(tree_object, current_node_id)
+end
+
 local function create_longsword_iai_attempt(move_def, move_state, motion_frame, source_tag, started_node_id, started_node_name)
     return {
         attemptId = runtime_state.nextAttemptId,
@@ -797,7 +917,7 @@ local function is_hostile_damage_owner_type(owner_type)
 end
 
 local function try_jump_to_node(node_id)
-    local behavior_tree = get_behavior_tree()
+    local behavior_tree = get_cached_behavior_tree()
     if not behavior_tree or not node_id then
         return false
     end
@@ -836,6 +956,20 @@ sdk.hook(
         local current_player_index = ref_player_base:get_field("_PlayerIndex")
         local master_player_index = master_player:get_field("_PlayerIndex")
         if current_player_index ~= master_player_index then
+            return
+        end
+
+        local weapon_type = get_player_weapon_type()
+        local should_track_action = false
+        if weapon_type == 13 then
+            should_track_action = get_bow_dodgebolt_auto_config() ~= nil
+        elseif weapon_type == 7 then
+            should_track_action = get_lance_instant_block_auto_config() ~= nil
+        end
+
+        if not should_track_action then
+            runtime_state.currentActionId = nil
+            runtime_state.currentActionBank = nil
             return
         end
 
@@ -1050,17 +1184,11 @@ local function process_pending_longsword_iai_reward()
 end
 
 local function refresh_longsword_iai_runtime()
-    local weapon_type = get_player_weapon_type()
-    local motion_id = get_motion_id()
-    local current_node_id = get_current_node_id()
-    local current_node_name = get_current_node_name()
-    local motion_frame = get_motion_frame()
-
-    runtime_state.lastKnownWeaponType = weapon_type
-    runtime_state.lastKnownMotionId = motion_id
-    runtime_state.lastKnownMotionFrame = motion_frame
-    runtime_state.lastKnownNodeId = current_node_id
-    runtime_state.lastKnownNodeName = current_node_name
+    local weapon_type = runtime_state.lastKnownWeaponType
+    local motion_id = runtime_state.lastKnownMotionId
+    local current_node_id = runtime_state.lastKnownNodeId
+    local current_node_name = runtime_state.lastKnownNodeName
+    local motion_frame = runtime_state.lastKnownMotionFrame
 
     local move_config = get_longsword_iai_move_config()
     local reward_config = get_longsword_iai_reward_config()
@@ -1144,6 +1272,7 @@ end
 
 re.on_frame(function()
     apply_custom_gp_frames()
+    refresh_runtime_cache()
     refresh_longsword_iai_runtime()
     process_pending_longsword_iai_reward()
 end)
@@ -1308,25 +1437,33 @@ sdk.hook(
             return retval
         end
 
-        local weapon_type = get_player_weapon_type()
+        local weapon_type = runtime_state.lastKnownWeaponType or get_player_weapon_type()
         if weapon_type == 13 then
             local bow_auto_config = get_bow_dodgebolt_auto_config()
-            if bow_auto_config
-                and owner_type == 1
-                and damage_flow_type == 0
-                and is_bow_auto_dodgebolt_window(get_tracked_action_id())
-                and try_jump_to_node(bow_auto_config.moveDef.autoDodgeTargetNodeId) then
-                return sdk.to_ptr(1)
+            if bow_auto_config and owner_type == 1 and damage_flow_type == 0 then
+                local action_id = get_tracked_action_id()
+                if is_bow_auto_dodgebolt_window(action_id) then
+                    local signature = build_auto_defense_signature(weapon_type, owner_type, damage_flow_type)
+                    if can_trigger_auto_defense(weapon_type, signature)
+                        and try_jump_to_node(bow_auto_config.moveDef.autoDodgeTargetNodeId) then
+                        mark_auto_defense_triggered(weapon_type, signature, bow_auto_config.moveDef.autoDodgeTargetNodeId)
+                        return sdk.to_ptr(1)
+                    end
+                end
             end
         end
 
         if weapon_type == 7 then
             local lance_auto_config = get_lance_instant_block_auto_config()
-            if lance_auto_config
-                and damage_flow_type == 0
-                and is_lance_auto_instant_block_window()
-                and try_jump_to_node(lance_auto_config.moveDef.autoGuardTargetNodeId) then
-                return sdk.to_ptr(1)
+            if lance_auto_config and damage_flow_type == 0 then
+                if is_lance_auto_instant_block_window() then
+                    local signature = build_auto_defense_signature(weapon_type, owner_type, damage_flow_type)
+                    if can_trigger_auto_defense(weapon_type, signature)
+                        and try_jump_to_node(lance_auto_config.moveDef.autoGuardTargetNodeId) then
+                        mark_auto_defense_triggered(weapon_type, signature, lance_auto_config.moveDef.autoGuardTargetNodeId)
+                        return sdk.to_ptr(1)
+                    end
+                end
             end
         end
 
@@ -1334,9 +1471,15 @@ sdk.hook(
         local special_sheathe_attempt = runtime_state.activeLongSwordSpecialSheatheAttempt
         if auto_config and special_sheathe_attempt and not special_sheathe_attempt.consumed then
             if weapon_type == auto_config.moveDef.resultWeaponType
+                and damage_flow_type == 0
                 and runtime_state.pendingLongSwordIaiReward == nil
-                and trigger_longsword_special_sheathe_auto_iai(auto_config, owner_type) then
-                return sdk.to_ptr(2)
+            then
+                local signature = build_auto_defense_signature(weapon_type, owner_type, damage_flow_type)
+                if can_trigger_auto_defense(weapon_type, signature)
+                    and trigger_longsword_special_sheathe_auto_iai(auto_config, owner_type) then
+                    mark_auto_defense_triggered(weapon_type, signature, auto_config.moveDef.autoIaiTargetNodeId)
+                    return sdk.to_ptr(2)
+                end
             end
         end
 
