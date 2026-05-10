@@ -640,7 +640,6 @@ local function begin_longsword_special_sheathe_attempt(move_def, motion_frame)
         attemptId = runtime_state.nextAttemptId,
         standbyNodeId = move_def.specialSheatheReadyNodeId,
         standbyNodeName = move_def.specialSheatheReadyNodeName,
-        standbyMotionId = move_def.specialSheatheReadyMotionId,
         targetNodeId = move_def.autoIaiTargetNodeId,
         targetNodeName = move_def.autoIaiTargetNodeName,
         targetMotionId = move_def.autoIaiTargetMotionId,
@@ -1136,12 +1135,8 @@ sdk.hook(
         local special_sheathe_attempt = runtime_state.activeLongSwordSpecialSheatheAttempt
         if auto_config and special_sheathe_attempt and not special_sheathe_attempt.consumed then
             local weapon_type = get_player_weapon_type()
-            local motion_id = get_motion_id()
-            local current_node_id = get_current_node_id()
 
             if weapon_type == auto_config.moveDef.resultWeaponType
-                and current_node_id == auto_config.moveDef.specialSheatheReadyNodeId
-                and (auto_config.moveDef.specialSheatheReadyMotionId == nil or motion_id == auto_config.moveDef.specialSheatheReadyMotionId)
                 and runtime_state.pendingLongSwordIaiReward == nil
                 and trigger_longsword_special_sheathe_auto_iai(auto_config, owner_type) then
                 return sdk.to_ptr(2)

@@ -35,7 +35,6 @@ local ordered_weapons = {
                 mrSuccessNodeId = 3569005589,
                 specialSheatheReadyNodeId = 1110077419,
                 specialSheatheReadyNodeName = "atk.atk151.atk_154",
-                specialSheatheReadyMotionId = 154,
                 autoIaiTargetNodeId = 3716128725,
                 autoIaiTargetNodeName = "atk.atk151.atk_155",
                 autoIaiTargetMotionId = 155,
