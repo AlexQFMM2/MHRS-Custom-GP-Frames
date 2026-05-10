@@ -58,7 +58,24 @@ local runtime_state = {
     lastKnownMotionId = nil,
     lastKnownMotionFrame = nil,
     lastKnownWeaponType = nil,
-    nextAttemptId = 1
+    nextAttemptId = 1,
+    debug = {
+        currentNodeId = nil,
+        currentNodeName = nil,
+        isOnSpecialSheatheReadyNode = false,
+        statusText = "等待测试",
+        statusUpdatedAt = nil,
+        lastDamageAt = nil,
+        lastDamageOwnerType = nil,
+        lastDamageFlowType = nil,
+        lastDamageNodeId = nil,
+        lastDamageNodeName = nil,
+        lastDamageMotionId = nil,
+        lastDamageMotionFrame = nil,
+        lastDamageSawSpecialSheatheAttempt = false,
+        lastDamageTriggeredAutoIai = false,
+        lastDamageTriggeredRewardQueue = false
+    }
 }
 
 local longsword_iai_reward_action_types = {
@@ -77,6 +94,23 @@ local function safe_call(fn)
     end
 
     return nil
+end
+
+local function set_debug_status(text)
+    runtime_state.debug.statusText = text
+    runtime_state.debug.statusUpdatedAt = os.clock()
+end
+
+local function format_debug_value(value)
+    if value == nil then
+        return "nil"
+    end
+
+    if type(value) == "boolean" then
+        return value and "是" or "否"
+    end
+
+    return tostring(value)
 end
 
 local function get_display_language()
@@ -633,6 +667,7 @@ local function begin_longsword_iai_attempt(move_def, move_state, motion_frame)
         get_current_node_name()
     )
     runtime_state.nextAttemptId = runtime_state.nextAttemptId + 1
+    set_debug_status("已进入居合动作窗口，开始跟踪成功奖励。")
 end
 
 local function begin_longsword_special_sheathe_attempt(move_def, motion_frame)
@@ -648,6 +683,7 @@ local function begin_longsword_special_sheathe_attempt(move_def, motion_frame)
         consumed = false
     }
     runtime_state.nextAttemptId = runtime_state.nextAttemptId + 1
+    set_debug_status("已捕获特殊纳刀待机节点，等待受击自动出居合。")
 end
 
 local function is_hostile_damage_owner_type(owner_type)
@@ -708,21 +744,28 @@ local function stage_longsword_iai_reward(attempt, owner_type, motion_frame, sou
 end
 
 local function queue_longsword_iai_reward(owner_type)
-    return stage_longsword_iai_reward(
+    local queued = stage_longsword_iai_reward(
         runtime_state.activeLongSwordIaiAttempt,
         owner_type,
         get_motion_frame(),
         "manual_iai_window"
     )
+    if queued then
+        set_debug_status("受击命中居合窗口，已排队处理成功奖励。")
+    end
+
+    return queued
 end
 
 local function trigger_longsword_special_sheathe_auto_iai(config, owner_type)
     local standby_attempt = runtime_state.activeLongSwordSpecialSheatheAttempt
     if not config or not standby_attempt or standby_attempt.consumed then
+        set_debug_status("自动居合未触发：当前没有可用的特殊纳刀待机尝试。")
         return false
     end
 
     if not try_jump_to_node(config.moveDef.autoIaiTargetNodeId) then
+        set_debug_status("自动居合未触发：setCurrentNode(atk.atk151.atk_155) 失败。")
         return false
     end
 
@@ -742,10 +785,12 @@ local function trigger_longsword_special_sheathe_auto_iai(config, owner_type)
     runtime_state.nextAttemptId = runtime_state.nextAttemptId + 1
 
     if not stage_longsword_iai_reward(runtime_state.activeLongSwordIaiAttempt, owner_type, 0, "auto_special_sheathe") then
+        set_debug_status("自动居合已跳节点，但没有成功排队奖励处理。")
         return false
     end
 
     runtime_state.activeLongSwordSpecialSheatheAttempt = nil
+    set_debug_status("自动居合已触发：已跳到 atk.atk151.atk_155 并排队成功奖励。")
     return true
 end
 
@@ -763,6 +808,11 @@ local function mark_longsword_iai_reward_resolved(manual_fallback)
     end
 
     runtime_state.pendingLongSwordIaiReward = nil
+    if manual_fallback then
+        set_debug_status("居合成功奖励已用手动补偿兜底。")
+    else
+        set_debug_status("居合成功奖励已确认落地。")
+    end
 end
 
 local function apply_manual_longsword_iai_reward(pending)
@@ -880,15 +930,20 @@ local function refresh_longsword_iai_runtime()
     local weapon_type = get_player_weapon_type()
     local motion_id = get_motion_id()
     local current_node_id = get_current_node_id()
+    local current_node_name = get_current_node_name()
     local motion_frame = get_motion_frame()
 
     runtime_state.lastKnownWeaponType = weapon_type
     runtime_state.lastKnownMotionId = motion_id
     runtime_state.lastKnownMotionFrame = motion_frame
+    runtime_state.debug.currentNodeId = current_node_id
+    runtime_state.debug.currentNodeName = current_node_name
 
     local move_config = get_longsword_iai_move_config()
     local reward_config = get_longsword_iai_reward_config()
     local auto_config = get_longsword_iai_auto_config()
+    runtime_state.debug.isOnSpecialSheatheReadyNode = auto_config ~= nil
+        and current_node_id == auto_config.moveDef.specialSheatheReadyNodeId
 
     if not move_config or weapon_type ~= move_config.moveDef.resultWeaponType then
         clear_longsword_iai_runtime()
@@ -983,6 +1038,67 @@ local function get_weapon_combo_index(weapon_type)
     return 1
 end
 
+local function draw_longsword_iai_debug_ui(move_def)
+    local debug = runtime_state.debug
+    local standby_attempt = runtime_state.activeLongSwordSpecialSheatheAttempt
+    local iai_attempt = runtime_state.activeLongSwordIaiAttempt
+    local pending = runtime_state.pendingLongSwordIaiReward
+
+    if imgui.tree_node("自动居合调试信息##ls_auto_iai_debug") then
+        imgui.text("最近状态: " .. format_debug_value(debug.statusText))
+        imgui.text("状态更新时间: " .. format_debug_value(debug.statusUpdatedAt))
+        imgui.text("当前节点ID: " .. format_debug_value(debug.currentNodeId))
+        imgui.text("当前节点名: " .. format_debug_value(debug.currentNodeName))
+        imgui.text("当前 MotionId: " .. format_debug_value(runtime_state.lastKnownMotionId))
+        imgui.text("当前 MotionFrame: " .. format_debug_value(runtime_state.lastKnownMotionFrame))
+        imgui.text("当前是否命中特殊纳刀待机节点: " .. format_debug_value(debug.isOnSpecialSheatheReadyNode))
+        imgui.text("目标待机节点: " .. format_debug_value(move_def.specialSheatheReadyNodeName))
+        imgui.text("目标居合节点: " .. format_debug_value(move_def.autoIaiTargetNodeName))
+
+        if standby_attempt then
+            imgui.text("特殊纳刀待机 attemptId: " .. format_debug_value(standby_attempt.attemptId))
+            imgui.text("特殊纳刀待机 consumed: " .. format_debug_value(standby_attempt.consumed))
+            imgui.text("特殊纳刀待机 lastFrame: " .. format_debug_value(standby_attempt.lastMotionFrame))
+        else
+            imgui.text("特殊纳刀待机: 当前没有捕获到 attempt")
+        end
+
+        if iai_attempt then
+            imgui.text("居合 attemptId: " .. format_debug_value(iai_attempt.attemptId))
+            imgui.text("居合来源: " .. format_debug_value(iai_attempt.sourceTag))
+            imgui.text("居合 consumed: " .. format_debug_value(iai_attempt.consumed))
+            imgui.text("居合 windowEnd: " .. format_debug_value(iai_attempt.windowEnd))
+        else
+            imgui.text("居合窗口: 当前没有 active attempt")
+        end
+
+        if pending then
+            imgui.text("待发奖励 attemptId: " .. format_debug_value(pending.attemptId))
+            imgui.text("待发奖励来源: " .. format_debug_value(pending.sourceTag))
+            imgui.text("待发奖励剩余验证帧: " .. format_debug_value(pending.validationFramesRemaining))
+            imgui.text("待发奖励 jumpAttempted: " .. format_debug_value(pending.jumpAttempted))
+            imgui.text("待发奖励 jumpTargetNodeId: " .. format_debug_value(pending.jumpTargetNodeId))
+        else
+            imgui.text("待发奖励: 当前没有 pending reward")
+        end
+
+        imgui.text("最近一次受击时间: " .. format_debug_value(debug.lastDamageAt))
+        imgui.text("最近一次受击 OwnerType: " .. format_debug_value(debug.lastDamageOwnerType))
+        imgui.text("最近一次受击返回值: " .. format_debug_value(debug.lastDamageFlowType))
+        imgui.text("最近一次受击节点ID: " .. format_debug_value(debug.lastDamageNodeId))
+        imgui.text("最近一次受击节点名: " .. format_debug_value(debug.lastDamageNodeName))
+        imgui.text("最近一次受击 MotionId: " .. format_debug_value(debug.lastDamageMotionId))
+        imgui.text("最近一次受击 MotionFrame: " .. format_debug_value(debug.lastDamageMotionFrame))
+        imgui.text("最近一次受击时是否已有特殊纳刀 attempt: " .. format_debug_value(debug.lastDamageSawSpecialSheatheAttempt))
+        imgui.text("最近一次受击是否触发自动居合: " .. format_debug_value(debug.lastDamageTriggeredAutoIai))
+        imgui.text("最近一次受击是否进入普通居合奖励队列: " .. format_debug_value(debug.lastDamageTriggeredRewardQueue))
+        imgui.text("最近一次自动居合触发时间: " .. format_debug_value(runtime_state.lastAutoIaiAt))
+        imgui.text("最近一次跳转节点ID: " .. format_debug_value(runtime_state.lastJumpTargetNodeId))
+
+        imgui.tree_pop()
+    end
+end
+
 -- 绘制某把武器下的招式配置。
 local function draw_weapon_moves(weapon_def)
     local changed = false
@@ -1033,6 +1149,7 @@ local function draw_weapon_moves(weapon_def)
                 imgui.text("当前识别待机节点: atk.atk151.atk_154")
                 imgui.text("命中后会自动推进到 atk.atk151.atk_155。")
                 imgui.text("自动居合会复用同一套成功奖励模拟链。")
+                draw_longsword_iai_debug_ui(move_def)
             end
 
             if imgui.button("恢复默认##move_reset_" .. weapon_def.weaponType .. "_" .. move_def.id) then
@@ -1116,6 +1233,11 @@ sdk.hook(
         local hit_info = sdk.to_managed_object(args[3])
         storage["customGpFramesHitInfo"] = hit_info
         storage["customGpFramesDamageData"] = hit_info and hit_info:get_AttackData() or nil
+        storage["customGpFramesNodeIdBeforeDamage"] = get_current_node_id()
+        storage["customGpFramesNodeNameBeforeDamage"] = get_current_node_name()
+        storage["customGpFramesMotionIdBeforeDamage"] = get_motion_id()
+        storage["customGpFramesMotionFrameBeforeDamage"] = get_motion_frame()
+        storage["customGpFramesHadSpecialSheatheAttempt"] = runtime_state.activeLongSwordSpecialSheatheAttempt ~= nil
     end,
     function(retval)
         local storage = thread.get_hook_storage()
@@ -1127,7 +1249,23 @@ sdk.hook(
         local owner_type = safe_call(function()
             return storage["customGpFramesDamageData"]:get_OwnerType()
         end)
+        local damage_flow_type = safe_call(function()
+            return sdk.to_int64(retval)
+        end)
+
+        runtime_state.debug.lastDamageAt = os.clock()
+        runtime_state.debug.lastDamageOwnerType = owner_type
+        runtime_state.debug.lastDamageFlowType = damage_flow_type
+        runtime_state.debug.lastDamageNodeId = storage["customGpFramesNodeIdBeforeDamage"]
+        runtime_state.debug.lastDamageNodeName = storage["customGpFramesNodeNameBeforeDamage"]
+        runtime_state.debug.lastDamageMotionId = storage["customGpFramesMotionIdBeforeDamage"]
+        runtime_state.debug.lastDamageMotionFrame = storage["customGpFramesMotionFrameBeforeDamage"]
+        runtime_state.debug.lastDamageSawSpecialSheatheAttempt = storage["customGpFramesHadSpecialSheatheAttempt"] == true
+        runtime_state.debug.lastDamageTriggeredAutoIai = false
+        runtime_state.debug.lastDamageTriggeredRewardQueue = false
+
         if owner_type == nil or not is_hostile_damage_owner_type(owner_type) then
+            set_debug_status("受击钩子命中，但 OwnerType 不是敌对攻击。")
             return retval
         end
 
@@ -1139,6 +1277,7 @@ sdk.hook(
             if weapon_type == auto_config.moveDef.resultWeaponType
                 and runtime_state.pendingLongSwordIaiReward == nil
                 and trigger_longsword_special_sheathe_auto_iai(auto_config, owner_type) then
+                runtime_state.debug.lastDamageTriggeredAutoIai = true
                 return sdk.to_ptr(2)
             end
         end
@@ -1146,6 +1285,7 @@ sdk.hook(
         local config = get_longsword_iai_reward_config()
         local attempt = runtime_state.activeLongSwordIaiAttempt
         if not config or not attempt or attempt.consumed or runtime_state.pendingLongSwordIaiReward ~= nil then
+            set_debug_status("受击钩子命中，但当前没有可消费的居合窗口。")
             return retval
         end
 
@@ -1157,10 +1297,12 @@ sdk.hook(
         end
 
         if motion_frame < 0 or motion_frame > config.moveState.value then
+            set_debug_status("受击钩子命中，但当前帧不在居合窗口内。")
             return retval
         end
 
         if queue_longsword_iai_reward(owner_type) then
+            runtime_state.debug.lastDamageTriggeredRewardQueue = true
             return sdk.to_ptr(2)
         end
 
