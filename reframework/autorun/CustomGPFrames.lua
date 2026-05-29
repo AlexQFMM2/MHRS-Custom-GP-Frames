@@ -439,6 +439,21 @@ local function ensure_move_state(weapon_type, move_def)
         move_state.autoDodgeEnabled = move_def.autoDodgeEnabledByDefault or false
     end
 
+    if type(move_def.autoDodgeDirections) == "table" then
+        local direction_found = false
+        for _, direction in ipairs(move_def.autoDodgeDirections) do
+            if move_state.autoDodgeDirection == direction.id then
+                direction_found = true
+                break
+            end
+        end
+
+        if not direction_found then
+            move_state.autoDodgeDirection = move_def.autoDodgeDirectionDefault
+                or (move_def.autoDodgeDirections[1] and move_def.autoDodgeDirections[1].id)
+        end
+    end
+
     if move_def.autoGuardMode ~= nil and move_state.autoGuardEnabled == nil then
         move_state.autoGuardEnabled = move_def.autoGuardEnabledByDefault or false
     end
@@ -588,6 +603,11 @@ local function reset_move_state(move_def, move_state)
         move_state.autoDodgeEnabled = move_def.autoDodgeEnabledByDefault or false
     end
 
+    if type(move_def.autoDodgeDirections) == "table" then
+        move_state.autoDodgeDirection = move_def.autoDodgeDirectionDefault
+            or (move_def.autoDodgeDirections[1] and move_def.autoDodgeDirections[1].id)
+    end
+
     if move_def.autoGuardMode ~= nil then
         move_state.autoGuardEnabled = move_def.autoGuardEnabledByDefault or false
     end
@@ -675,6 +695,47 @@ local function get_bow_dodgebolt_auto_config()
     end
 
     return config
+end
+
+local function get_auto_dodge_direction_index(move_def, move_state)
+    if type(move_def.autoDodgeDirections) ~= "table" then
+        return 1
+    end
+
+    for index, direction in ipairs(move_def.autoDodgeDirections) do
+        if direction.id == move_state.autoDodgeDirection then
+            return index
+        end
+    end
+
+    return 1
+end
+
+local function get_auto_dodge_direction_labels(move_def)
+    local labels = {}
+    if type(move_def.autoDodgeDirections) ~= "table" then
+        return labels
+    end
+
+    for _, direction in ipairs(move_def.autoDodgeDirections) do
+        table.insert(labels, direction.label)
+    end
+
+    return labels
+end
+
+local function get_auto_dodge_target_node_id(move_def, move_state)
+    if type(move_def.autoDodgeDirections) ~= "table" then
+        return move_def.autoDodgeTargetNodeId
+    end
+
+    for _, direction in ipairs(move_def.autoDodgeDirections) do
+        if direction.id == move_state.autoDodgeDirection then
+            return direction.nodeId
+        end
+    end
+
+    return move_def.autoDodgeTargetNodeId
 end
 
 local function get_lance_instant_block_config()
@@ -1404,6 +1465,20 @@ local function draw_weapon_moves(weapon_def)
                     move_state.autoDodgeEnabled
                 )
                 changed = changed or toggle
+
+                if type(move_def.autoDodgeDirections) == "table" then
+                    local direction_combo_index = get_auto_dodge_direction_index(move_def, move_state)
+                    local direction_changed
+                    direction_changed, direction_combo_index = imgui.combo(
+                        "自动闪身方向##move_auto_dodge_direction_" .. weapon_def.weaponType .. "_" .. move_def.id,
+                        direction_combo_index,
+                        get_auto_dodge_direction_labels(move_def)
+                    )
+                    if direction_changed then
+                        move_state.autoDodgeDirection = move_def.autoDodgeDirections[direction_combo_index].id
+                        changed = true
+                    end
+                end
             end
 
             if move_def.autoGuardMode ~= nil then
@@ -1514,9 +1589,10 @@ sdk.hook(
                 local action_id = get_tracked_action_id()
                 if is_bow_auto_dodgebolt_window(action_id) then
                     local signature = build_auto_defense_signature(weapon_type, owner_type, damage_flow_type)
+                    local target_node_id = get_auto_dodge_target_node_id(bow_auto_config.moveDef, bow_auto_config.moveState)
                     if can_trigger_auto_defense(weapon_type, signature)
-                        and try_jump_to_node(bow_auto_config.moveDef.autoDodgeTargetNodeId) then
-                        mark_auto_defense_triggered(weapon_type, signature, bow_auto_config.moveDef.autoDodgeTargetNodeId)
+                        and try_jump_to_node(target_node_id) then
+                        mark_auto_defense_triggered(weapon_type, signature, target_node_id)
                         return sdk.to_ptr(1)
                     end
                 end

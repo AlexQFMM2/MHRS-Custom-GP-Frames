@@ -80,6 +80,29 @@ local ordered_weapons = {
                 valueMode = "end_frame",
                 autoDodgeMode = "bow_auto_dodgebolt",
                 autoDodgeEnabledByDefault = false,
+                autoDodgeDirectionDefault = "back",
+                autoDodgeDirections = {
+                    {
+                        id = "back",
+                        label = "后",
+                        nodeId = 3858837153
+                    },
+                    {
+                        id = "front",
+                        label = "前",
+                        nodeId = 1762771780
+                    },
+                    {
+                        id = "left",
+                        label = "左",
+                        nodeId = 481533731
+                    },
+                    {
+                        id = "right",
+                        label = "右",
+                        nodeId = 1336556275
+                    }
+                },
                 autoDodgeTargetNodeId = 3858837153,
                 autoOptionLabel = "自动闪身",
                 sliderLabel = "GP结束帧",
