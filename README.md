@@ -402,7 +402,7 @@
 
 可选调试：
 
-- `调试打印`：进入圆月启动节点或首次捕获 `LongSwordShell010` 时，在 REFramework 控制台输出 `[CustomGP][HarvestMoon]` 快照。
+- `调试打印`：进入圆月启动节点或首次捕获 `LongSwordShell010` 时，把 `[CustomGP][HarvestMoon]` 快照写入 `reframework/data/CustomGPFrames_harvest_moon_debug.log`。
 - 快照包含当前节点、motion、`9529/9530/9531` action 字段、shell `_lifeTime`、`_userData/_moveParam`、以及 `_lifeTime/_Range/_RangeY/_WarningRange` 写入前后值。
 
 关闭功能或关闭总开关后，脚本会尽量把已捕获对象恢复为本次会话记录到的原始值。

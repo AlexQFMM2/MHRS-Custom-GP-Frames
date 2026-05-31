@@ -27,6 +27,7 @@ end
 local defs = require("custom_gp_frames/weapon_move_defs")
 
 local config_path = "CustomGPFrames.json"
+local harvest_moon_debug_log_path = "reframework/data/CustomGPFrames_harvest_moon_debug.log"
 local ordered_weapons = defs.ordered_weapons
 local weapon_by_type = defs.weapon_by_type
 local weapon_combo_labels = defs.weapon_combo_labels
@@ -92,6 +93,7 @@ local runtime_state = {
     harvestMoonLastLaunchNodeActive = false,
     harvestMoonLaunchDebugCount = 0,
     harvestMoonLastVisualDebugSignature = nil,
+    harvestMoonDebugLogInitialized = false,
     nextAttemptId = 1
 }
 
@@ -123,12 +125,17 @@ end
 
 local function custom_gp_log(message)
     local text = tostring(message)
-    if log ~= nil and log.info ~= nil then
-        log.info(text)
-        return
-    end
+    local mode = runtime_state.harvestMoonDebugLogInitialized and "a" or "w"
+    local file = io.open(harvest_moon_debug_log_path, mode)
+    if file ~= nil then
+        if not runtime_state.harvestMoonDebugLogInitialized then
+            file:write("[CustomGP][HarvestMoon] debug log start\n")
+            runtime_state.harvestMoonDebugLogInitialized = true
+        end
 
-    print(text)
+        file:write(text .. "\n")
+        file:close()
+    end
 end
 
 local function get_display_language()
@@ -708,8 +715,12 @@ local function snapshot_original(action_index, action_obj)
     end
 
     original_frames[action_index] = {
-        startFrame = action_obj:get_field("_StartFrame"),
-        endFrame = action_obj:get_field("_EndFrame")
+        startFrame = safe_call(function()
+            return action_obj:get_field("_StartFrame")
+        end),
+        endFrame = safe_call(function()
+            return action_obj:get_field("_EndFrame")
+        end)
     }
 end
 
@@ -725,8 +736,15 @@ local function restore_action(action_index)
         return
     end
 
-    action_obj:set_field("_StartFrame", original.startFrame)
-    action_obj:set_field("_EndFrame", original.endFrame)
+    safe_call(function()
+        if original.startFrame ~= nil then
+            action_obj:set_field("_StartFrame", original.startFrame)
+        end
+        if original.endFrame ~= nil then
+            action_obj:set_field("_EndFrame", original.endFrame)
+        end
+        return true
+    end)
 end
 
 -- 恢复所有被改过的 action。
@@ -741,12 +759,18 @@ end
 -- 后面如果某些武器需要改成“按时长换算”或者同时改起始帧，可以在这里继续扩展。
 local function apply_move_override(action_obj, move_def, move_state)
     if move_def.valueMode == "end_frame" then
-        action_obj:set_field("_EndFrame", move_state.value * 1.0)
+        safe_call(function()
+            action_obj:set_field("_EndFrame", move_state.value * 1.0)
+            return true
+        end)
         return
     end
 
     if move_def.valueMode == "start_frame" then
-        action_obj:set_field("_StartFrame", move_state.value * 1.0)
+        safe_call(function()
+            action_obj:set_field("_StartFrame", move_state.value * 1.0)
+            return true
+        end)
         return
     end
 end
