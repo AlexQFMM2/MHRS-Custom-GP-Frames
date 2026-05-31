@@ -1344,6 +1344,24 @@ local function is_master_longsword_object(player_longsword)
     return true
 end
 
+local function get_master_player_index()
+    local master_player = get_master_player()
+    if master_player == nil then
+        return nil
+    end
+
+    local player_index = safe_call(function()
+        return master_player:call("getPlayerIndex")
+    end)
+    if player_index ~= nil then
+        return player_index
+    end
+
+    return safe_call(function()
+        return master_player:get_field("_PlayerIndex")
+    end)
+end
+
 local function get_longsword_harvest_moon_shell_id(shell_object)
     if shell_object == nil then
         return nil
@@ -1366,6 +1384,49 @@ local function get_longsword_harvest_moon_shell_id(shell_object)
     return nil
 end
 
+local function get_longsword_harvest_moon_shell_owner_id(shell_object)
+    if shell_object == nil then
+        return nil
+    end
+
+    local owner_id = safe_call(function()
+        return shell_object:call("get_OwnerId")
+    end)
+    if owner_id ~= nil then
+        return owner_id
+    end
+
+    return safe_call(function()
+        return shell_object:get_field("_OwnerId")
+    end)
+end
+
+local function is_master_longsword_harvest_moon_shell(shell_object)
+    if shell_object == nil or get_player_weapon_type() ~= 2 then
+        return false
+    end
+
+    local is_master_shell = safe_call(function()
+        return shell_object:call("get_IsMaster")
+    end)
+    if is_master_shell == nil then
+        is_master_shell = safe_call(function()
+            return shell_object:get_field("<IsMaster>k__BackingField")
+        end)
+    end
+    if is_master_shell ~= true then
+        return false
+    end
+
+    local owner_id = get_longsword_harvest_moon_shell_owner_id(shell_object)
+    local master_player_index = get_master_player_index()
+    if owner_id ~= nil and master_player_index ~= nil then
+        return tostring(owner_id) == tostring(master_player_index)
+    end
+
+    return owner_id == nil and master_player_index == nil
+end
+
 local function is_longsword_harvest_moon_capture_active()
     return runtime_state.harvestMoonPendingCaptureUntil ~= nil
         and os.clock() <= runtime_state.harvestMoonPendingCaptureUntil
@@ -1377,7 +1438,13 @@ local function begin_longsword_harvest_moon_capture(player_longsword)
 end
 
 local function mark_longsword_harvest_moon_shell(shell_object)
-    if shell_object == nil or not is_longsword_harvest_moon_capture_active() then
+    if shell_object == nil then
+        return
+    end
+
+    if not is_longsword_harvest_moon_capture_active()
+        and not is_master_longsword_harvest_moon_shell(shell_object)
+    then
         return
     end
 
@@ -1396,6 +1463,9 @@ local function schedule_longsword_harvest_moon_recreate(shell_object)
     local is_tracked = shell_object ~= nil and runtime_state.harvestMoonTrackedShells[shell_object] == true
     if not is_tracked and shell_id ~= nil then
         is_tracked = runtime_state.harvestMoonTrackedShellIds[shell_id] == true
+    end
+    if not is_tracked then
+        is_tracked = is_master_longsword_harvest_moon_shell(shell_object)
     end
 
     if not is_tracked then
