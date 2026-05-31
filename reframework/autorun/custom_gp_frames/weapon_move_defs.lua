@@ -75,38 +75,12 @@ local ordered_weapons = {
                 description = "默认只在自由态触发；也可切到全动作模式，在普通动作受击时更激进地自动见切，但会保护居合、神威居合、水月、刚气刃斩和手动见切链。触发后会尝试进入原版见切成功路线，不手动补数值奖励。"
             },
             {
-                id = "harvest_moon_custom_params",
-                label = "圆月持续时间",
+                id = "harvest_moon_auto_recreate",
+                label = "圆月自动重开",
                 featureOnly = true,
-                shellParamMode = "longsword_harvest_moon",
-                shellTypeName = "snow.shell.LongSwordShell010",
-                shellMainUserDataField = "_userData",
-                shellMoveParamField = "_moveParam",
-                shellParamValues = {
-                    {
-                        id = "lifeTimeMultiplier",
-                        label = "持续时间倍率",
-                        field = "_lifeTime",
-                        target = "move_param",
-                        default = 1.0,
-                        options = {
-                            { value = 0.5, label = "0.5倍" },
-                            { value = 1.0, label = "1倍" },
-                            { value = 2.0, label = "2倍" },
-                            { value = 3.0, label = "3倍" },
-                            { value = 4.0, label = "4倍" },
-                            { value = 5.0, label = "5倍" },
-                            { value = 6.0, label = "6倍" },
-                            { value = 7.0, label = "7倍" },
-                            { value = 8.0, label = "8倍" },
-                            { value = 9.0, label = "9倍" },
-                            { value = 10.0, label = "10倍" }
-                        }
-                    }
-                },
                 enabledByDefault = false,
-                modeHint = "只修改圆月 LongSwordShell010 的持续时间倍率",
-                description = "保守功能：运行时捕获圆月本体 LongSwordShell010，只按倍率修改 _moveParam._lifeTime。范围、视觉圈、自动续圆月和调试日志都已移除，避免额外性能开销。"
+                modeHint = "圆月消失后下一帧自动重新创建",
+                description = "开启后捕获本地玩家创建的圆月 LongSwordShell010；当圆月自然结束、收刀、出圈或被原版回收时，下一帧调用原版 createSpacingShell 重新创建。"
             }
         }
     },
