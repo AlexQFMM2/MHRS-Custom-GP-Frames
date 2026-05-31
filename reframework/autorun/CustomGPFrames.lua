@@ -51,6 +51,7 @@ local lance_auto_defense_cooldown = 0.06
 local longsword_auto_iai_cooldown = 0.10
 local free_state_cache_window = 0.20
 local harvest_moon_recreate_cooldown = 0.25
+local harvest_moon_recreate_delay = 0.25
 local harvest_moon_capture_window = 0.35
 
 -- 太刀居合成功奖励模拟的运行时状态。
@@ -85,12 +86,15 @@ local runtime_state = {
     autoDefenseState = {},
     harvestMoonTrackedShells = setmetatable({}, { __mode = "k" }),
     harvestMoonDestroyedShells = setmetatable({}, { __mode = "k" }),
+    harvestMoonTrackedShellIds = {},
+    harvestMoonDestroyedShellIds = {},
     harvestMoonShellHooksInstalled = false,
     harvestMoonCreateHookInstalled = false,
     harvestMoonCreateSpacingShellMethod = nil,
     harvestMoonLastMasterLongSword = nil,
     harvestMoonPendingCaptureUntil = nil,
     harvestMoonPendingRecreate = false,
+    harvestMoonPendingRecreateAt = nil,
     harvestMoonLastRecreateAt = nil,
     harvestMoonRecreateInProgress = false,
     nextAttemptId = 1
@@ -1314,6 +1318,10 @@ local function is_master_longsword_object(player_longsword)
         return false
     end
 
+    if get_player_weapon_type() ~= 2 then
+        return false
+    end
+
     local master_player = get_master_player()
     if master_player == nil then
         return false
@@ -1326,12 +1334,46 @@ local function is_master_longsword_object(player_longsword)
         return player_longsword:get_field("_PlayerIndex")
     end)
 
-    return master_player_index ~= nil and master_player_index == longsword_player_index
+    if master_player_index ~= nil and longsword_player_index ~= nil then
+        return master_player_index == longsword_player_index
+    end
+
+    -- snow.player.LongSword does not expose _PlayerIndex in current dumps.
+    -- createSpacingShell is a LongSword instance method, so current local weapon
+    -- type is the most reliable low-noise fallback we have here.
+    return true
+end
+
+local function get_longsword_harvest_moon_shell_id(shell_object)
+    if shell_object == nil then
+        return nil
+    end
+
+    local unique_id = safe_call(function()
+        return shell_object:call("get_UniqueId")
+    end)
+    if unique_id ~= nil then
+        return tostring(unique_id)
+    end
+
+    unique_id = safe_call(function()
+        return shell_object:get_field("<UniqueId>k__BackingField")
+    end)
+    if unique_id ~= nil then
+        return tostring(unique_id)
+    end
+
+    return nil
 end
 
 local function is_longsword_harvest_moon_capture_active()
     return runtime_state.harvestMoonPendingCaptureUntil ~= nil
         and os.clock() <= runtime_state.harvestMoonPendingCaptureUntil
+end
+
+local function begin_longsword_harvest_moon_capture(player_longsword)
+    runtime_state.harvestMoonLastMasterLongSword = player_longsword
+    runtime_state.harvestMoonPendingCaptureUntil = os.clock() + harvest_moon_capture_window
 end
 
 local function mark_longsword_harvest_moon_shell(shell_object)
@@ -1341,14 +1383,28 @@ local function mark_longsword_harvest_moon_shell(shell_object)
 
     runtime_state.harvestMoonTrackedShells[shell_object] = true
     runtime_state.harvestMoonDestroyedShells[shell_object] = nil
+
+    local shell_id = get_longsword_harvest_moon_shell_id(shell_object)
+    if shell_id ~= nil then
+        runtime_state.harvestMoonTrackedShellIds[shell_id] = true
+        runtime_state.harvestMoonDestroyedShellIds[shell_id] = nil
+    end
 end
 
 local function schedule_longsword_harvest_moon_recreate(shell_object)
-    if shell_object == nil or runtime_state.harvestMoonTrackedShells[shell_object] ~= true then
+    local shell_id = get_longsword_harvest_moon_shell_id(shell_object)
+    local is_tracked = shell_object ~= nil and runtime_state.harvestMoonTrackedShells[shell_object] == true
+    if not is_tracked and shell_id ~= nil then
+        is_tracked = runtime_state.harvestMoonTrackedShellIds[shell_id] == true
+    end
+
+    if not is_tracked then
         return
     end
 
-    if runtime_state.harvestMoonDestroyedShells[shell_object] == true then
+    if runtime_state.harvestMoonDestroyedShells[shell_object] == true
+        or (shell_id ~= nil and runtime_state.harvestMoonDestroyedShellIds[shell_id] == true)
+    then
         return
     end
 
@@ -1358,7 +1414,12 @@ local function schedule_longsword_harvest_moon_recreate(shell_object)
 
     runtime_state.harvestMoonDestroyedShells[shell_object] = true
     runtime_state.harvestMoonTrackedShells[shell_object] = nil
+    if shell_id ~= nil then
+        runtime_state.harvestMoonDestroyedShellIds[shell_id] = true
+        runtime_state.harvestMoonTrackedShellIds[shell_id] = nil
+    end
     runtime_state.harvestMoonPendingRecreate = true
+    runtime_state.harvestMoonPendingRecreateAt = os.clock() + harvest_moon_recreate_delay
 end
 
 local function process_longsword_harvest_moon_recreate()
@@ -1371,10 +1432,17 @@ local function process_longsword_harvest_moon_recreate()
 
     if get_longsword_harvest_moon_config() == nil then
         runtime_state.harvestMoonPendingRecreate = false
+        runtime_state.harvestMoonPendingRecreateAt = nil
         return
     end
 
     if runtime_state.harvestMoonPendingRecreate ~= true then
+        return
+    end
+
+    if runtime_state.harvestMoonPendingRecreateAt ~= nil
+        and now < runtime_state.harvestMoonPendingRecreateAt
+    then
         return
     end
 
@@ -1393,6 +1461,7 @@ local function process_longsword_harvest_moon_recreate()
         or get_player_weapon_type() ~= 2
     then
         runtime_state.harvestMoonPendingRecreate = false
+        runtime_state.harvestMoonPendingRecreateAt = nil
         return
     end
 
@@ -1406,6 +1475,7 @@ local function process_longsword_harvest_moon_recreate()
 
     if created then
         runtime_state.harvestMoonPendingRecreate = false
+        runtime_state.harvestMoonPendingRecreateAt = nil
     end
 end
 
@@ -1430,19 +1500,26 @@ local function install_longsword_harvest_moon_create_hook()
         sdk.hook(
             create_spacing_shell_method,
             function(args)
+                thread.get_hook_storage()["customGpFramesHarvestMoonLongSwordThis"] = nil
                 if get_longsword_harvest_moon_config() == nil then
                     return sdk.PreHookResult.CALL_ORIGINAL
                 end
 
                 local this = sdk.to_managed_object(args[2])
                 if is_master_longsword_object(this) then
-                    runtime_state.harvestMoonLastMasterLongSword = this
-                    runtime_state.harvestMoonPendingCaptureUntil = os.clock() + harvest_moon_capture_window
+                    thread.get_hook_storage()["customGpFramesHarvestMoonLongSwordThis"] = args[2]
+                    begin_longsword_harvest_moon_capture(this)
                 end
 
                 return sdk.PreHookResult.CALL_ORIGINAL
             end,
             function(retval)
+                if get_longsword_harvest_moon_config() ~= nil then
+                    local this = sdk.to_managed_object(thread.get_hook_storage()["customGpFramesHarvestMoonLongSwordThis"])
+                    if is_master_longsword_object(this) then
+                        begin_longsword_harvest_moon_capture(this)
+                    end
+                end
                 return retval
             end
         )
