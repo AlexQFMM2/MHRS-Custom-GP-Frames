@@ -90,6 +90,14 @@ local longsword_iai_reward_action_types = {
     ["snow.player.fsm.PlayerFsm2ActionLongSwordAddLv"] = true
 }
 
+local longsword_auto_foresight_protected_node_prefixes = {
+    "atk.atk151",
+    "atk.atk_161_MR",
+    "atk.WireXReplaceE_MR",
+    "atk.WireReplaceF_MR",
+    "atk.atk_147"
+}
+
 local longsword_max_gauge_level = 3
 
 local function safe_call(fn)
@@ -345,6 +353,20 @@ local function is_free_state_node_name(node_name)
         or starts_with(node_name, "atk.jump_atk.")
 end
 
+local function is_longsword_auto_foresight_protected_node_name(node_name)
+    if node_name == nil then
+        return false
+    end
+
+    for _, prefix in ipairs(longsword_auto_foresight_protected_node_prefixes) do
+        if starts_with(node_name, prefix) then
+            return true
+        end
+    end
+
+    return false
+end
+
 local function mark_free_state_seen(weapon_type, node_id, node_name)
     runtime_state.lastFreeStateWeaponType = weapon_type
     runtime_state.lastFreeStateNodeId = node_id
@@ -371,6 +393,42 @@ local function was_recently_in_free_state(weapon_type)
     end
 
     return (os.clock() - runtime_state.lastFreeStateAt) <= free_state_cache_window
+end
+
+local function is_recent_longsword_protected_node_name(node_name, seen_at)
+    if not is_longsword_auto_foresight_protected_node_name(node_name) or seen_at == nil then
+        return false
+    end
+
+    return (os.clock() - seen_at) <= free_state_cache_window
+end
+
+local function is_longsword_auto_foresight_protected_state()
+    if runtime_state.pendingLongSwordIaiReward ~= nil
+        or runtime_state.activeLongSwordIaiAttempt ~= nil
+        or runtime_state.activeLongSwordSpecialSheatheAttempt ~= nil then
+        return true
+    end
+
+    if is_longsword_auto_foresight_protected_node_name(get_current_node_name())
+        or is_longsword_auto_foresight_protected_node_name(runtime_state.lastKnownNodeName) then
+        return true
+    end
+
+    return runtime_state.lastNonFreeStateWeaponType == 2
+        and is_recent_longsword_protected_node_name(runtime_state.lastNonFreeStateNodeName, runtime_state.lastNonFreeStateAt)
+end
+
+local function can_trigger_longsword_auto_foresight(config, weapon_type)
+    if weapon_type ~= 2 or config == nil or is_longsword_auto_foresight_protected_state() then
+        return false
+    end
+
+    if config.moveState.triggerMode == "aggressive" then
+        return true
+    end
+
+    return was_recently_in_free_state(weapon_type)
 end
 
 local function is_lance_auto_instant_block_window()
@@ -517,6 +575,21 @@ local function ensure_move_state(weapon_type, move_def)
 
     if move_def.autoGuardMode ~= nil and move_state.autoGuardEnabled == nil then
         move_state.autoGuardEnabled = move_def.autoGuardEnabledByDefault or false
+    end
+
+    if type(move_def.triggerModeOptions) == "table" then
+        local mode_found = false
+        for _, option in ipairs(move_def.triggerModeOptions) do
+            if move_state.triggerMode == option.id then
+                mode_found = true
+                break
+            end
+        end
+
+        if not mode_found then
+            move_state.triggerMode = move_def.triggerModeDefault
+                or (move_def.triggerModeOptions[1] and move_def.triggerModeOptions[1].id)
+        end
     end
 
     return move_state
@@ -681,6 +754,11 @@ local function reset_move_state(move_def, move_state)
     if move_def.autoGuardMode ~= nil then
         move_state.autoGuardEnabled = move_def.autoGuardEnabledByDefault or false
     end
+
+    if type(move_def.triggerModeOptions) == "table" then
+        move_state.triggerMode = move_def.triggerModeDefault
+            or (move_def.triggerModeOptions[1] and move_def.triggerModeOptions[1].id)
+    end
 end
 
 local function find_move_definition(weapon_type, move_id)
@@ -742,6 +820,33 @@ end
 
 local function get_longsword_auto_foresight_config()
     return get_enabled_move_config(2, "free_state_auto_foresight")
+end
+
+local function get_trigger_mode_index(move_def, move_state)
+    if type(move_def.triggerModeOptions) ~= "table" then
+        return 1
+    end
+
+    for index, option in ipairs(move_def.triggerModeOptions) do
+        if option.id == move_state.triggerMode then
+            return index
+        end
+    end
+
+    return 1
+end
+
+local function get_trigger_mode_labels(move_def)
+    local labels = {}
+    if type(move_def.triggerModeOptions) ~= "table" then
+        return labels
+    end
+
+    for _, option in ipairs(move_def.triggerModeOptions) do
+        table.insert(labels, option.label)
+    end
+
+    return labels
 end
 
 local function get_bow_dodgebolt_config()
@@ -1564,6 +1669,20 @@ local function draw_weapon_moves(weapon_def)
                 changed = changed or toggle
             end
 
+            if type(move_def.triggerModeOptions) == "table" then
+                local trigger_mode_index = get_trigger_mode_index(move_def, move_state)
+                local trigger_mode_changed
+                trigger_mode_changed, trigger_mode_index = imgui.combo(
+                    (move_def.triggerModeLabel or "触发范围") .. "##move_trigger_mode_" .. weapon_def.weaponType .. "_" .. move_def.id,
+                    trigger_mode_index,
+                    get_trigger_mode_labels(move_def)
+                )
+                if trigger_mode_changed then
+                    move_state.triggerMode = move_def.triggerModeOptions[trigger_mode_index].id
+                    changed = true
+                end
+            end
+
             if imgui.button("恢复默认##move_reset_" .. weapon_def.weaponType .. "_" .. move_def.id) then
                 reset_move_state(move_def, move_state)
                 changed = true
@@ -1688,23 +1807,6 @@ sdk.hook(
             end
         end
 
-        if weapon_type == 2 then
-            local foresight_auto_config = get_longsword_auto_foresight_config()
-            if foresight_auto_config
-                and damage_flow_type == 0
-                and runtime_state.pendingLongSwordIaiReward == nil
-                and was_recently_in_free_state(weapon_type)
-            then
-                local target_node_id = foresight_auto_config.moveDef.autoForesightTargetNodeId
-                local signature = build_auto_defense_signature(weapon_type, owner_type, damage_flow_type)
-                if can_trigger_auto_defense(weapon_type, signature)
-                    and try_jump_to_node(target_node_id) then
-                    mark_auto_defense_triggered(weapon_type, signature, target_node_id)
-                    return sdk.to_ptr(2)
-                end
-            end
-        end
-
         local auto_config = get_longsword_auto_iai_config()
         local special_sheathe_attempt = runtime_state.activeLongSwordSpecialSheatheAttempt
         if auto_config and special_sheathe_attempt and not special_sheathe_attempt.consumed then
@@ -1716,6 +1818,22 @@ sdk.hook(
                 if can_trigger_auto_defense(weapon_type, signature)
                     and trigger_longsword_special_sheathe_auto_iai(auto_config, owner_type) then
                     mark_auto_defense_triggered(weapon_type, signature, auto_config.moveDef.autoIaiTargetNodeId)
+                    return sdk.to_ptr(2)
+                end
+            end
+        end
+
+        if weapon_type == 2 then
+            local foresight_auto_config = get_longsword_auto_foresight_config()
+            if foresight_auto_config
+                and damage_flow_type == 0
+                and can_trigger_longsword_auto_foresight(foresight_auto_config, weapon_type)
+            then
+                local target_node_id = foresight_auto_config.moveDef.autoForesightTargetNodeId
+                local signature = build_auto_defense_signature(weapon_type, owner_type, damage_flow_type)
+                if can_trigger_auto_defense(weapon_type, signature)
+                    and try_jump_to_node(target_node_id) then
+                    mark_auto_defense_triggered(weapon_type, signature, target_node_id)
                     return sdk.to_ptr(2)
                 end
             end
