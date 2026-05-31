@@ -82,6 +82,12 @@ local ordered_weapons = {
                 shellTypeName = "snow.shell.LongSwordShell010",
                 shellMainUserDataField = "_userData",
                 shellMoveParamField = "_moveParam",
+                visualScaleActionIndex = 9531,
+                visualScaleMultiplierParamId = "rangeMultiplier",
+                visualScaleFields = {
+                    "_BaseScale",
+                    "_CurrentScale"
+                },
                 shellParamValues = {
                     {
                         id = "lifeTimeMultiplier",
@@ -136,7 +142,7 @@ local ordered_weapons = {
                 },
                 enabledByDefault = false,
                 modeHint = "修改圆月 LongSwordShell010 的持续时间和范围倍率",
-                description = "实验功能：运行时捕获圆月本体 LongSwordShell010，并按倍率修改 _lifeTime、_Range、_RangeY、_WarningRange。默认倍率 1.00，不直接写死原版数值。"
+                description = "实验功能：运行时捕获圆月本体 LongSwordShell010，并按倍率修改 _lifeTime、_Range、_RangeY、_WarningRange。视觉圆圈跟随水平范围倍率同步缩放。默认倍率 1.00，不直接写死原版数值。"
             }
         }
     },

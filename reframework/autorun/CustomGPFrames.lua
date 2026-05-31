@@ -83,6 +83,7 @@ local runtime_state = {
     autoDefenseState = {},
     harvestMoonOriginalParams = setmetatable({}, { __mode = "k" }),
     harvestMoonOriginalShellValues = setmetatable({}, { __mode = "k" }),
+    harvestMoonOriginalVisualScale = setmetatable({}, { __mode = "k" }),
     harvestMoonCapturedShells = setmetatable({}, { __mode = "k" }),
     harvestMoonHooksInstalled = false,
     harvestMoonPatchedThisFrame = false,
@@ -1278,6 +1279,10 @@ local function is_hostile_damage_owner_type(owner_type)
     return owner_type == 0 or owner_type == 1 or owner_type == 2
 end
 
+local function is_longsword_auto_foresight_damage_owner_type(owner_type)
+    return owner_type == 1
+end
+
 local function try_jump_to_node(node_id)
     local behavior_tree = get_cached_behavior_tree()
     if not behavior_tree or not node_id then
@@ -1303,6 +1308,14 @@ local function get_shell_param_multiplier(move_state, value_def)
     end
 
     return move_state.shellParamValues[value_def.id] or value_def.default or 1.0
+end
+
+local function get_shell_param_multiplier_by_id(move_state, param_id, default_value)
+    if type(move_state.shellParamValues) ~= "table" then
+        return default_value or 1.0
+    end
+
+    return move_state.shellParamValues[param_id] or default_value or 1.0
 end
 
 local function snapshot_original_field(cache, object, field_name)
@@ -1388,6 +1401,43 @@ local function apply_longsword_harvest_moon_shell(shell_object, config)
     return applied
 end
 
+local function apply_longsword_harvest_moon_visual_scale(config)
+    if config == nil
+        or config.moveDef.visualScaleActionIndex == nil
+        or type(config.moveDef.visualScaleFields) ~= "table" then
+        return false
+    end
+
+    local action_obj = get_action(config.moveDef.visualScaleActionIndex)
+    if action_obj == nil then
+        return false
+    end
+
+    local multiplier = get_shell_param_multiplier_by_id(
+        config.moveState,
+        config.moveDef.visualScaleMultiplierParamId,
+        1.0
+    )
+    local applied = false
+    for _, field_name in ipairs(config.moveDef.visualScaleFields) do
+        local original_value = snapshot_original_field(
+            runtime_state.harvestMoonOriginalVisualScale,
+            action_obj,
+            field_name
+        )
+
+        if type(original_value) == "number" then
+            applied = safe_call(function()
+                action_obj:set_field(field_name, original_value * multiplier)
+                return true
+            end) == true or applied
+        end
+    end
+
+    runtime_state.harvestMoonPatchedThisFrame = runtime_state.harvestMoonPatchedThisFrame or applied
+    return applied
+end
+
 local function restore_longsword_harvest_moon_cache(cache)
     for object, fields in pairs(cache) do
         if object ~= nil and type(fields) == "table" then
@@ -1406,6 +1456,7 @@ end
 local function restore_longsword_harvest_moon_params()
     restore_longsword_harvest_moon_cache(runtime_state.harvestMoonOriginalParams)
     restore_longsword_harvest_moon_cache(runtime_state.harvestMoonOriginalShellValues)
+    restore_longsword_harvest_moon_cache(runtime_state.harvestMoonOriginalVisualScale)
     runtime_state.harvestMoonCapturedShells = setmetatable({}, { __mode = "k" })
 end
 
@@ -1423,6 +1474,7 @@ local function apply_longsword_harvest_moon_custom_params()
     for shell_object, _ in pairs(runtime_state.harvestMoonCapturedShells) do
         apply_longsword_harvest_moon_shell(shell_object, config)
     end
+    apply_longsword_harvest_moon_visual_scale(config)
 end
 
 local function install_longsword_harvest_moon_shell_pre_hooks()
@@ -2185,6 +2237,7 @@ sdk.hook(
         if weapon_type == 2 then
             local foresight_auto_config = get_longsword_auto_foresight_config()
             if foresight_auto_config
+                and is_longsword_auto_foresight_damage_owner_type(owner_type)
                 and damage_flow_type == 0
                 and can_trigger_longsword_auto_foresight(foresight_auto_config, weapon_type)
             then
