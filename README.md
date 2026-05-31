@@ -386,9 +386,9 @@
 
 这项功能在 UI 里是：
 
-- `太刀 -> 圆月参数`
+- `太刀 -> 圆月参数 [测试中]`
 
-开启后，脚本会在运行时捕获圆月本体 `LongSwordShell010`，并按倍率修改相关字段。这里使用倍率而不是写死秒数/半径，是为了保留游戏当前版本的原始参数作为基准。视觉圆圈会通过 `9531 / PlayerFsm2ActionSetEffectAndScale` 跟随水平范围倍率同步缩放。
+开启后，脚本会在运行时捕获圆月本体 `LongSwordShell010`，并按倍率修改相关字段。这里使用倍率而不是写死秒数/半径，是为了保留游戏当前版本的原始参数作为基准。视觉圆圈同步仍在测试中，当前保留 `9531 / PlayerFsm2ActionSetEffectAndScale` 的实验写入，但不再把它视为已确认方案。
 
 可调字段：
 
@@ -399,6 +399,11 @@
 - `LongSwordShell010._lifeTime`
 - `9531._BaseScale`
 - `9531._CurrentScale`
+
+可选调试：
+
+- `调试打印`：进入圆月启动节点或首次捕获 `LongSwordShell010` 时，在 REFramework 控制台输出 `[CustomGP][HarvestMoon]` 快照。
+- 快照包含当前节点、motion、`9529/9530/9531` action 字段、shell `_lifeTime`、`_userData/_moveParam`、以及 `_lifeTime/_Range/_RangeY/_WarningRange` 写入前后值。
 
 关闭功能或关闭总开关后，脚本会尽量把已捕获对象恢复为本次会话记录到的原始值。
 

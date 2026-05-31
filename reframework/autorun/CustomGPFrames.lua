@@ -85,8 +85,13 @@ local runtime_state = {
     harvestMoonOriginalShellValues = setmetatable({}, { __mode = "k" }),
     harvestMoonOriginalVisualScale = setmetatable({}, { __mode = "k" }),
     harvestMoonCapturedShells = setmetatable({}, { __mode = "k" }),
+    harvestMoonDebugSeenShells = setmetatable({}, { __mode = "k" }),
     harvestMoonHooksInstalled = false,
     harvestMoonPatchedThisFrame = false,
+    harvestMoonLastShell = nil,
+    harvestMoonLastLaunchNodeActive = false,
+    harvestMoonLaunchDebugCount = 0,
+    harvestMoonLastVisualDebugSignature = nil,
     nextAttemptId = 1
 }
 
@@ -114,6 +119,16 @@ local function safe_call(fn)
     end
 
     return nil
+end
+
+local function custom_gp_log(message)
+    local text = tostring(message)
+    if log ~= nil and log.info ~= nil then
+        log.info(text)
+        return
+    end
+
+    print(text)
 end
 
 local function get_display_language()
@@ -625,6 +640,10 @@ local function ensure_move_state(weapon_type, move_def)
         end
     end
 
+    if move_def.debugPrintOption == true and move_state.debugPrintEnabled == nil then
+        move_state.debugPrintEnabled = move_def.debugPrintEnabledByDefault or false
+    end
+
     return move_state
 end
 
@@ -799,6 +818,10 @@ local function reset_move_state(move_def, move_state)
             move_state.shellParamValues[value_def.id] = value_def.default
         end
     end
+
+    if move_def.debugPrintOption == true then
+        move_state.debugPrintEnabled = move_def.debugPrintEnabledByDefault or false
+    end
 end
 
 local function find_move_definition(weapon_type, move_id)
@@ -864,6 +887,16 @@ end
 
 local function get_longsword_harvest_moon_config()
     return get_enabled_move_config(2, "harvest_moon_custom_params")
+end
+
+local function is_longsword_harvest_moon_debug_enabled()
+    local move_def = find_move_definition(2, "harvest_moon_custom_params")
+    if move_def == nil then
+        return false
+    end
+
+    local move_state = ensure_move_state(2, move_def)
+    return settings.modEnabled and move_state.debugPrintEnabled == true
 end
 
 local function get_trigger_mode_index(move_def, move_state)
@@ -1178,6 +1211,8 @@ local function refresh_runtime_cache()
         get_longsword_iai_move_config() ~= nil
         or get_longsword_auto_iai_config() ~= nil
         or get_longsword_auto_foresight_config() ~= nil
+        or get_longsword_harvest_moon_config() ~= nil
+        or is_longsword_harvest_moon_debug_enabled()
         or runtime_state.pendingLongSwordIaiReward ~= nil
         or runtime_state.pendingLongSwordForesightReward ~= nil
         or runtime_state.activeLongSwordIaiAttempt ~= nil
@@ -1318,6 +1353,138 @@ local function get_shell_param_multiplier_by_id(move_state, param_id, default_va
     return move_state.shellParamValues[param_id] or default_value or 1.0
 end
 
+local function get_object_type_name(object)
+    if object == nil then
+        return "nil"
+    end
+
+    return safe_call(function()
+        return object:get_type_definition():get_full_name()
+    end) or tostring(object)
+end
+
+local function get_debug_field_value(object, field_name)
+    if object == nil or field_name == nil then
+        return nil
+    end
+
+    return safe_call(function()
+        return object:get_field(field_name)
+    end)
+end
+
+local function format_debug_value(value)
+    if value == nil then
+        return "nil"
+    end
+
+    return tostring(value)
+end
+
+local function get_longsword_harvest_moon_debug_config()
+    if not settings.modEnabled then
+        return nil
+    end
+
+    local move_def = find_move_definition(2, "harvest_moon_custom_params")
+    if move_def == nil then
+        return nil
+    end
+
+    local move_state = ensure_move_state(2, move_def)
+    if move_state.debugPrintEnabled ~= true then
+        return nil
+    end
+
+    return {
+        moveDef = move_def,
+        moveState = move_state
+    }
+end
+
+local function log_harvest_moon_action_snapshot(action_index)
+    local action_obj = get_action(action_index)
+    custom_gp_log("[CustomGP][HarvestMoon] action " .. tostring(action_index)
+        .. " type=" .. get_object_type_name(action_obj))
+
+    local fields = {
+        "v0_Enabled",
+        "v1_ID",
+        "containerID",
+        "_ElementID",
+        "_Frame",
+        "_BaseScale",
+        "_CurrentScale"
+    }
+
+    for _, field_name in ipairs(fields) do
+        local value = get_debug_field_value(action_obj, field_name)
+        if value ~= nil then
+            custom_gp_log("[CustomGP][HarvestMoon] action " .. tostring(action_index)
+                .. "." .. field_name .. "=" .. format_debug_value(value))
+        end
+    end
+end
+
+local function log_harvest_moon_shell_snapshot(shell_object, config, reason)
+    if shell_object == nil then
+        custom_gp_log("[CustomGP][HarvestMoon] shell snapshot skipped: nil shell (" .. tostring(reason) .. ")")
+        return
+    end
+
+    local move_def = config and config.moveDef or find_move_definition(2, "harvest_moon_custom_params")
+    local move_state = config and config.moveState or nil
+    local main_user_data = get_debug_field_value(shell_object, (move_def and move_def.shellMainUserDataField) or "_userData")
+    local move_param = nil
+    if main_user_data ~= nil then
+        move_param = get_debug_field_value(main_user_data, (move_def and move_def.shellMoveParamField) or "_moveParam")
+    end
+
+    custom_gp_log("[CustomGP][HarvestMoon] shell snapshot reason=" .. tostring(reason)
+        .. " shell=" .. tostring(shell_object)
+        .. " type=" .. get_object_type_name(shell_object))
+    custom_gp_log("[CustomGP][HarvestMoon] shell._lifeTime="
+        .. format_debug_value(get_debug_field_value(shell_object, "_lifeTime"))
+        .. " _userData=" .. tostring(main_user_data)
+        .. " _moveParam=" .. tostring(move_param))
+
+    if move_param ~= nil then
+        local fields = {
+            "_lifeTime",
+            "_Range",
+            "_RangeY",
+            "_WarningRange"
+        }
+        for _, field_name in ipairs(fields) do
+            custom_gp_log("[CustomGP][HarvestMoon] moveParam." .. field_name .. "="
+                .. format_debug_value(get_debug_field_value(move_param, field_name)))
+        end
+    end
+
+    if move_state ~= nil and type(move_def.shellParamValues) == "table" then
+        for _, value_def in ipairs(move_def.shellParamValues) do
+            custom_gp_log("[CustomGP][HarvestMoon] uiMultiplier." .. value_def.id .. "="
+                .. format_debug_value(get_shell_param_multiplier(move_state, value_def)))
+        end
+    end
+end
+
+local function log_longsword_harvest_moon_launch(config)
+    runtime_state.harvestMoonLaunchDebugCount = runtime_state.harvestMoonLaunchDebugCount + 1
+    custom_gp_log("[CustomGP][HarvestMoon] launch #" .. tostring(runtime_state.harvestMoonLaunchDebugCount)
+        .. " nodeId=" .. format_debug_value(runtime_state.lastKnownNodeId)
+        .. " nodeName=" .. tostring(runtime_state.lastKnownNodeName)
+        .. " motionId=" .. format_debug_value(runtime_state.lastKnownMotionId)
+        .. " motionFrame=" .. format_debug_value(runtime_state.lastKnownMotionFrame)
+        .. " weaponType=" .. format_debug_value(runtime_state.lastKnownWeaponType)
+        .. " featureEnabled=" .. tostring(config and config.moveState and config.moveState.enabled == true))
+
+    log_harvest_moon_action_snapshot(9529)
+    log_harvest_moon_action_snapshot(9530)
+    log_harvest_moon_action_snapshot(9531)
+    log_harvest_moon_shell_snapshot(runtime_state.harvestMoonLastShell, config, "launch_last_shell")
+end
+
 local function snapshot_original_field(cache, object, field_name)
     if object == nil or field_name == nil then
         return nil
@@ -1336,7 +1503,7 @@ local function snapshot_original_field(cache, object, field_name)
     return cache[object][field_name]
 end
 
-local function apply_longsword_harvest_moon_object_field(object, cache, value_def, move_state)
+local function apply_longsword_harvest_moon_object_field(object, cache, value_def, move_state, debug_label, debug_once)
     if object == nil or value_def == nil or value_def.field == nil then
         return false
     end
@@ -1347,10 +1514,23 @@ local function apply_longsword_harvest_moon_object_field(object, cache, value_de
     end
 
     local multiplier = get_shell_param_multiplier(move_state, value_def)
-    return safe_call(function()
-        object:set_field(value_def.field, original_value * multiplier)
+    local target_value = original_value * multiplier
+    local applied = safe_call(function()
+        object:set_field(value_def.field, target_value)
         return true
     end) == true
+
+    if debug_once == true then
+        custom_gp_log("[CustomGP][HarvestMoon] write " .. tostring(debug_label or value_def.target)
+            .. "." .. tostring(value_def.field)
+            .. " original=" .. format_debug_value(original_value)
+            .. " multiplier=" .. format_debug_value(multiplier)
+            .. " target=" .. format_debug_value(target_value)
+            .. " applied=" .. tostring(applied)
+            .. " after=" .. format_debug_value(get_debug_field_value(object, value_def.field)))
+    end
+
+    return applied
 end
 
 local function get_longsword_harvest_moon_move_param(shell_object, move_def)
@@ -1376,25 +1556,37 @@ local function apply_longsword_harvest_moon_shell(shell_object, config)
     end
 
     runtime_state.harvestMoonCapturedShells[shell_object] = true
+    runtime_state.harvestMoonLastShell = shell_object
 
     local applied = false
     local move_param = get_longsword_harvest_moon_move_param(shell_object, config.moveDef)
+    local debug_once = config.moveState.debugPrintEnabled == true
+        and runtime_state.harvestMoonDebugSeenShells[shell_object] ~= true
     for _, value_def in ipairs(config.moveDef.shellParamValues or {}) do
         if value_def.target == "shell" then
             applied = apply_longsword_harvest_moon_object_field(
                 shell_object,
                 runtime_state.harvestMoonOriginalShellValues,
                 value_def,
-                config.moveState
+                config.moveState,
+                "shell",
+                debug_once
             ) or applied
         else
             applied = apply_longsword_harvest_moon_object_field(
                 move_param,
                 runtime_state.harvestMoonOriginalParams,
                 value_def,
-                config.moveState
+                config.moveState,
+                "moveParam",
+                debug_once
             ) or applied
         end
+    end
+
+    if debug_once then
+        runtime_state.harvestMoonDebugSeenShells[shell_object] = true
+        log_harvest_moon_shell_snapshot(shell_object, config, "new_shell_capture")
     end
 
     runtime_state.harvestMoonPatchedThisFrame = runtime_state.harvestMoonPatchedThisFrame or applied
@@ -1418,6 +1610,9 @@ local function apply_longsword_harvest_moon_visual_scale(config)
         config.moveDef.visualScaleMultiplierParamId,
         1.0
     )
+    local visual_debug_signature = tostring(action_obj) .. ":" .. tostring(multiplier)
+    local should_log_visual_write = config.moveState.debugPrintEnabled == true
+        and runtime_state.harvestMoonLastVisualDebugSignature ~= visual_debug_signature
     local applied = false
     for _, field_name in ipairs(config.moveDef.visualScaleFields) do
         local original_value = snapshot_original_field(
@@ -1427,11 +1622,27 @@ local function apply_longsword_harvest_moon_visual_scale(config)
         )
 
         if type(original_value) == "number" then
-            applied = safe_call(function()
-                action_obj:set_field(field_name, original_value * multiplier)
+            local target_value = original_value * multiplier
+            local field_applied = safe_call(function()
+                action_obj:set_field(field_name, target_value)
                 return true
-            end) == true or applied
+            end) == true
+
+            if should_log_visual_write then
+                custom_gp_log("[CustomGP][HarvestMoon] visualWrite 9531." .. tostring(field_name)
+                    .. " original=" .. format_debug_value(original_value)
+                    .. " multiplier=" .. format_debug_value(multiplier)
+                    .. " target=" .. format_debug_value(target_value)
+                    .. " applied=" .. tostring(field_applied)
+                    .. " after=" .. format_debug_value(get_debug_field_value(action_obj, field_name)))
+            end
+
+            applied = field_applied or applied
         end
+    end
+
+    if should_log_visual_write then
+        runtime_state.harvestMoonLastVisualDebugSignature = visual_debug_signature
     end
 
     runtime_state.harvestMoonPatchedThisFrame = runtime_state.harvestMoonPatchedThisFrame or applied
@@ -1458,10 +1669,27 @@ local function restore_longsword_harvest_moon_params()
     restore_longsword_harvest_moon_cache(runtime_state.harvestMoonOriginalShellValues)
     restore_longsword_harvest_moon_cache(runtime_state.harvestMoonOriginalVisualScale)
     runtime_state.harvestMoonCapturedShells = setmetatable({}, { __mode = "k" })
+    runtime_state.harvestMoonDebugSeenShells = setmetatable({}, { __mode = "k" })
+    runtime_state.harvestMoonLastShell = nil
+    runtime_state.harvestMoonLastVisualDebugSignature = nil
 end
 
 local function apply_longsword_harvest_moon_custom_params()
     local config = get_longsword_harvest_moon_config()
+    local debug_config = get_longsword_harvest_moon_debug_config()
+    local launch_move_def = (config and config.moveDef) or (debug_config and debug_config.moveDef)
+    local launch_node_id = launch_move_def and launch_move_def.launchNodeId
+    local is_launch_node = launch_node_id ~= nil and runtime_state.lastKnownNodeId == launch_node_id
+
+    if debug_config ~= nil then
+        if is_launch_node and runtime_state.harvestMoonLastLaunchNodeActive ~= true then
+            log_longsword_harvest_moon_launch(config or debug_config)
+        end
+        runtime_state.harvestMoonLastLaunchNodeActive = is_launch_node
+    else
+        runtime_state.harvestMoonLastLaunchNodeActive = false
+    end
+
     if config == nil then
         if runtime_state.harvestMoonPatchedThisFrame then
             restore_longsword_harvest_moon_params()
@@ -2092,6 +2320,14 @@ local function draw_weapon_moves(weapon_def)
                         changed = true
                     end
                 end
+            end
+
+            if move_def.debugPrintOption == true then
+                toggle, move_state.debugPrintEnabled = imgui.checkbox(
+                    (move_def.debugPrintLabel or "调试打印") .. "##move_debug_print_" .. weapon_def.weaponType .. "_" .. move_def.id,
+                    move_state.debugPrintEnabled
+                )
+                changed = changed or toggle
             end
 
             if imgui.button("恢复默认##move_reset_" .. weapon_def.weaponType .. "_" .. move_def.id) then
