@@ -402,7 +402,8 @@
 
 可选调试：
 
-- `调试打印`：进入圆月启动节点或首次捕获 `LongSwordShell010` 时，把 `[CustomGP][HarvestMoon]` 快照写入 `reframework/data/CustomGPFrames_harvest_moon_debug.log`。
+- `调试打印`：开启后先写入一条 heartbeat；进入圆月启动节点或首次捕获 `LongSwordShell010` 时，把 `[CustomGP][HarvestMoon]` 快照写入日志文件。
+- 优先日志路径：`reframework/data/CustomGPFrames_harvest_moon_debug.log`；如果该路径无法创建，会退到游戏根目录的 `CustomGPFrames_harvest_moon_debug.log`。
 - 快照包含当前节点、motion、`9529/9530/9531` action 字段、shell `_lifeTime`、`_userData/_moveParam`、以及 `_lifeTime/_Range/_RangeY/_WarningRange` 写入前后值。
 
 关闭功能或关闭总开关后，脚本会尽量把已捕获对象恢复为本次会话记录到的原始值。

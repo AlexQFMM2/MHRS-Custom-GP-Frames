@@ -27,7 +27,10 @@ end
 local defs = require("custom_gp_frames/weapon_move_defs")
 
 local config_path = "CustomGPFrames.json"
-local harvest_moon_debug_log_path = "reframework/data/CustomGPFrames_harvest_moon_debug.log"
+local harvest_moon_debug_log_paths = {
+    "reframework/data/CustomGPFrames_harvest_moon_debug.log",
+    "CustomGPFrames_harvest_moon_debug.log"
+}
 local ordered_weapons = defs.ordered_weapons
 local weapon_by_type = defs.weapon_by_type
 local weapon_combo_labels = defs.weapon_combo_labels
@@ -94,6 +97,8 @@ local runtime_state = {
     harvestMoonLaunchDebugCount = 0,
     harvestMoonLastVisualDebugSignature = nil,
     harvestMoonDebugLogInitialized = false,
+    harvestMoonDebugLogPath = nil,
+    harvestMoonDebugHeartbeatWritten = false,
     nextAttemptId = 1
 }
 
@@ -126,10 +131,28 @@ end
 local function custom_gp_log(message)
     local text = tostring(message)
     local mode = runtime_state.harvestMoonDebugLogInitialized and "a" or "w"
-    local file = io.open(harvest_moon_debug_log_path, mode)
+    local file = nil
+    local opened_path = runtime_state.harvestMoonDebugLogPath
+
+    if opened_path ~= nil then
+        file = io.open(opened_path, mode)
+    end
+
+    if file == nil then
+        for _, path in ipairs(harvest_moon_debug_log_paths) do
+            file = io.open(path, mode)
+            if file ~= nil then
+                runtime_state.harvestMoonDebugLogPath = path
+                opened_path = path
+                break
+            end
+        end
+    end
+
     if file ~= nil then
         if not runtime_state.harvestMoonDebugLogInitialized then
             file:write("[CustomGP][HarvestMoon] debug log start\n")
+            file:write("[CustomGP][HarvestMoon] log path=" .. tostring(opened_path) .. "\n")
             runtime_state.harvestMoonDebugLogInitialized = true
         end
 
@@ -1509,6 +1532,23 @@ local function log_longsword_harvest_moon_launch(config)
     log_harvest_moon_shell_snapshot(runtime_state.harvestMoonLastShell, config, "launch_last_shell")
 end
 
+local function log_longsword_harvest_moon_heartbeat(debug_config)
+    if runtime_state.harvestMoonDebugHeartbeatWritten == true then
+        return
+    end
+
+    runtime_state.harvestMoonDebugHeartbeatWritten = true
+    custom_gp_log("[CustomGP][HarvestMoon] debug enabled"
+        .. " featureEnabled=" .. tostring(debug_config and debug_config.moveState and debug_config.moveState.enabled == true)
+        .. " selectedWeaponType=" .. format_debug_value(settings.selectedWeaponType)
+        .. " currentWeaponType=" .. format_debug_value(runtime_state.lastKnownWeaponType)
+        .. " nodeId=" .. format_debug_value(runtime_state.lastKnownNodeId)
+        .. " nodeName=" .. tostring(runtime_state.lastKnownNodeName)
+        .. " motionId=" .. format_debug_value(runtime_state.lastKnownMotionId)
+        .. " motionFrame=" .. format_debug_value(runtime_state.lastKnownMotionFrame))
+    custom_gp_log("[CustomGP][HarvestMoon] names: English=Harvest Moon internal=spacing/windhole shell=LongSwordShell010")
+end
+
 local function snapshot_original_field(cache, object, field_name)
     if object == nil or field_name == nil then
         return nil
@@ -1703,15 +1743,19 @@ local function apply_longsword_harvest_moon_custom_params()
     local debug_config = get_longsword_harvest_moon_debug_config()
     local launch_move_def = (config and config.moveDef) or (debug_config and debug_config.moveDef)
     local launch_node_id = launch_move_def and launch_move_def.launchNodeId
-    local is_launch_node = launch_node_id ~= nil and runtime_state.lastKnownNodeId == launch_node_id
+    local launch_node_name = launch_move_def and launch_move_def.launchNodeName
+    local is_launch_node = (launch_node_id ~= nil and runtime_state.lastKnownNodeId == launch_node_id)
+        or (launch_node_name ~= nil and runtime_state.lastKnownNodeName == launch_node_name)
 
     if debug_config ~= nil then
+        log_longsword_harvest_moon_heartbeat(debug_config)
         if is_launch_node and runtime_state.harvestMoonLastLaunchNodeActive ~= true then
             log_longsword_harvest_moon_launch(config or debug_config)
         end
         runtime_state.harvestMoonLastLaunchNodeActive = is_launch_node
     else
         runtime_state.harvestMoonLastLaunchNodeActive = false
+        runtime_state.harvestMoonDebugHeartbeatWritten = false
     end
 
     if config == nil then
