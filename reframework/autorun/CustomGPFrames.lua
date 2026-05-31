@@ -49,6 +49,7 @@ local original_frames = {}
 local bow_auto_defense_cooldown = 0.10
 local lance_auto_defense_cooldown = 0.06
 local longsword_auto_iai_cooldown = 0.10
+local free_state_cache_window = 0.20
 
 -- 太刀居合成功奖励模拟的运行时状态。
 -- 这里不做全武器泛化，只服务当前的太刀居合实验功能。
@@ -65,6 +66,14 @@ local runtime_state = {
     lastKnownWeaponType = nil,
     lastKnownNodeId = nil,
     lastKnownNodeName = nil,
+    lastFreeStateWeaponType = nil,
+    lastFreeStateNodeId = nil,
+    lastFreeStateNodeName = nil,
+    lastFreeStateAt = nil,
+    lastNonFreeStateWeaponType = nil,
+    lastNonFreeStateNodeId = nil,
+    lastNonFreeStateNodeName = nil,
+    lastNonFreeStateAt = nil,
     currentActionId = nil,
     currentActionBank = nil,
     cachedBehaviorTree = nil,
@@ -313,21 +322,59 @@ local function get_current_node_name()
     return runtime_state.lastKnownNodeName
 end
 
-local function is_weapon_drawn_free_state()
-    if not is_player_weapon_drawn() then
-        return false
-    end
+local function starts_with(value, prefix)
+    return value ~= nil and string.sub(value, 1, string.len(prefix)) == prefix
+end
 
-    local node_name = get_current_node_name()
+local function is_free_state_node_name(node_name)
     if node_name == nil then
         return false
     end
 
-    return node_name == "atk.atk_wait" or string.sub(node_name, 1, 13) == "atk.atk_wait."
+    return node_name == "atk.atk_wait"
+        or starts_with(node_name, "atk.atk_wait.")
+        or node_name == "atk.atk_run"
+        or starts_with(node_name, "atk.atk_run.")
+        or starts_with(node_name, "atk.atk_run_start")
+        or starts_with(node_name, "atk.atk_run_end")
+        or starts_with(node_name, "atk.esc_")
+        or starts_with(node_name, "atk.step_")
+        or node_name == "atk.fall_atk"
+        or starts_with(node_name, "atk.fall_atk.")
+        or node_name == "atk.jump_atk"
+        or starts_with(node_name, "atk.jump_atk.")
+end
+
+local function mark_free_state_seen(weapon_type, node_id, node_name)
+    runtime_state.lastFreeStateWeaponType = weapon_type
+    runtime_state.lastFreeStateNodeId = node_id
+    runtime_state.lastFreeStateNodeName = node_name
+    runtime_state.lastFreeStateAt = os.clock()
+end
+
+local function mark_non_free_state_seen(weapon_type, node_id, node_name)
+    runtime_state.lastNonFreeStateWeaponType = weapon_type
+    runtime_state.lastNonFreeStateNodeId = node_id
+    runtime_state.lastNonFreeStateNodeName = node_name
+    runtime_state.lastNonFreeStateAt = os.clock()
+end
+
+local function was_recently_in_free_state(weapon_type)
+    if runtime_state.lastFreeStateWeaponType ~= weapon_type or runtime_state.lastFreeStateAt == nil then
+        return false
+    end
+
+    if runtime_state.lastNonFreeStateWeaponType == weapon_type
+        and runtime_state.lastNonFreeStateAt ~= nil
+        and runtime_state.lastNonFreeStateAt > runtime_state.lastFreeStateAt then
+        return false
+    end
+
+    return (os.clock() - runtime_state.lastFreeStateAt) <= free_state_cache_window
 end
 
 local function is_lance_auto_instant_block_window()
-    return is_weapon_drawn_free_state()
+    return was_recently_in_free_state(7)
 end
 
 local function get_current_node_action_type_names()
@@ -1020,6 +1067,14 @@ local function refresh_runtime_cache()
 
     if (should_refresh_longsword or should_refresh_lance) and current_node_id ~= nil then
         runtime_state.lastKnownNodeName = get_node_name_by_id(current_node_id)
+
+        if runtime_state.lastKnownNodeName ~= nil then
+            if is_player_weapon_drawn() and is_free_state_node_name(runtime_state.lastKnownNodeName) then
+                mark_free_state_seen(weapon_type, current_node_id, runtime_state.lastKnownNodeName)
+            else
+                mark_non_free_state_seen(weapon_type, current_node_id, runtime_state.lastKnownNodeName)
+            end
+        end
     end
 end
 
@@ -1638,7 +1693,7 @@ sdk.hook(
             if foresight_auto_config
                 and damage_flow_type == 0
                 and runtime_state.pendingLongSwordIaiReward == nil
-                and is_weapon_drawn_free_state()
+                and was_recently_in_free_state(weapon_type)
             then
                 local target_node_id = foresight_auto_config.moveDef.autoForesightTargetNodeId
                 local signature = build_auto_defense_signature(weapon_type, owner_type, damage_flow_type)

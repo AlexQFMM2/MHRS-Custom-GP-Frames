@@ -50,12 +50,12 @@ local ordered_weapons = {
                 label = "自由态自动见切",
                 featureOnly = true,
                 autoForesightMode = "longsword_free_state_auto_foresight",
-                autoForesightTargetNodeId = 2268203994,
-                autoForesightTargetNodeName = "atk.atk_128.atk_138",
+                autoForesightTargetNodeId = 532382550,
+                autoForesightTargetNodeName = "atk.atk_147.atk_147",
                 resultWeaponType = 2,
                 enabledByDefault = false,
-                modeHint = "持刀待机受击时自动跳到见切斩",
-                description = "只在持刀自由态触发：武器已拔出，并且当前节点是 atk.atk_wait 或其子节点。触发后只跳见切动作并拦截本次伤害，不额外补奖励。"
+                modeHint = "自由态受击时自动跳到见切斩",
+                description = "只在自由态触发：武器已拔出，且当前处于待机、移动、回避、落地或小跳等非武器招式机动动作。触发后只跳见切动作并拦截本次伤害，不额外补奖励。"
             }
         }
     },
