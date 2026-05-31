@@ -57,6 +57,7 @@ local runtime_state = {
     activeLongSwordIaiAttempt = nil,
     activeLongSwordSpecialSheatheAttempt = nil,
     pendingLongSwordIaiReward = nil,
+    pendingLongSwordForesightReward = nil,
     lastProcessedDamageTick = nil,
     lastForcedSuccessAt = nil,
     lastJumpTargetNodeId = nil,
@@ -405,6 +406,7 @@ end
 
 local function is_longsword_auto_foresight_protected_state()
     if runtime_state.pendingLongSwordIaiReward ~= nil
+        or runtime_state.pendingLongSwordForesightReward ~= nil
         or runtime_state.activeLongSwordIaiAttempt ~= nil
         or runtime_state.activeLongSwordSpecialSheatheAttempt ~= nil then
         return true
@@ -1135,6 +1137,7 @@ local function refresh_runtime_cache()
         or get_longsword_auto_iai_config() ~= nil
         or get_longsword_auto_foresight_config() ~= nil
         or runtime_state.pendingLongSwordIaiReward ~= nil
+        or runtime_state.pendingLongSwordForesightReward ~= nil
         or runtime_state.activeLongSwordIaiAttempt ~= nil
         or runtime_state.activeLongSwordSpecialSheatheAttempt ~= nil
     )
@@ -1498,6 +1501,52 @@ local function process_pending_longsword_iai_reward()
     end
 end
 
+local function stage_longsword_foresight_reward(config, owner_type)
+    if not config or config.moveDef.autoForesightSuccessRouteNodeId == nil then
+        return false
+    end
+
+    runtime_state.pendingLongSwordForesightReward = {
+        attemptId = runtime_state.nextAttemptId,
+        ownerType = owner_type,
+        sourceTag = "auto_foresight",
+        triggerNodeId = config.moveDef.autoForesightTargetNodeId,
+        triggerNodeName = config.moveDef.autoForesightTargetNodeName,
+        successRouteNodeId = config.moveDef.autoForesightSuccessRouteNodeId,
+        successRouteNodeName = config.moveDef.autoForesightSuccessRouteNodeName,
+        validationFramesRemaining = 3,
+        jumpAttempts = 0
+    }
+    runtime_state.nextAttemptId = runtime_state.nextAttemptId + 1
+
+    return true
+end
+
+local function process_pending_longsword_foresight_reward()
+    local pending = runtime_state.pendingLongSwordForesightReward
+    if not pending then
+        return
+    end
+
+    if runtime_state.lastKnownWeaponType ~= 2 then
+        runtime_state.pendingLongSwordForesightReward = nil
+        return
+    end
+
+    pending.jumpAttempts = (pending.jumpAttempts or 0) + 1
+    if try_jump_to_node(pending.successRouteNodeId) then
+        runtime_state.lastForcedSuccessAt = os.clock()
+        runtime_state.lastJumpTargetNodeId = pending.successRouteNodeId
+        runtime_state.pendingLongSwordForesightReward = nil
+        return
+    end
+
+    pending.validationFramesRemaining = (pending.validationFramesRemaining or 1) - 1
+    if pending.validationFramesRemaining <= 0 then
+        runtime_state.pendingLongSwordForesightReward = nil
+    end
+end
+
 local function refresh_longsword_iai_runtime()
     local weapon_type = runtime_state.lastKnownWeaponType
     local motion_id = runtime_state.lastKnownMotionId
@@ -1589,12 +1638,14 @@ re.on_frame(function()
 
     local should_run_longsword_runtime = runtime_state.lastKnownWeaponType == 2
         or runtime_state.pendingLongSwordIaiReward ~= nil
+        or runtime_state.pendingLongSwordForesightReward ~= nil
         or runtime_state.activeLongSwordIaiAttempt ~= nil
         or runtime_state.activeLongSwordSpecialSheatheAttempt ~= nil
 
     if should_run_longsword_runtime then
         refresh_longsword_iai_runtime()
         process_pending_longsword_iai_reward()
+        process_pending_longsword_foresight_reward()
     end
 end)
 
@@ -1833,6 +1884,7 @@ sdk.hook(
                 local signature = build_auto_defense_signature(weapon_type, owner_type, damage_flow_type)
                 if can_trigger_auto_defense(weapon_type, signature)
                     and try_jump_to_node(target_node_id) then
+                    stage_longsword_foresight_reward(foresight_auto_config, owner_type)
                     mark_auto_defense_triggered(weapon_type, signature, target_node_id)
                     return sdk.to_ptr(2)
                 end

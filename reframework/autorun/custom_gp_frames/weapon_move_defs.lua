@@ -52,6 +52,8 @@ local ordered_weapons = {
                 autoForesightMode = "longsword_free_state_auto_foresight",
                 autoForesightTargetNodeId = 532382550,
                 autoForesightTargetNodeName = "atk.atk_147.atk_147",
+                autoForesightSuccessRouteNodeId = 2839200054,
+                autoForesightSuccessRouteNodeName = "atk.atk_147.atk_147_end",
                 triggerModeLabel = "触发范围",
                 triggerModeDefault = "free_state",
                 triggerModeOptions = {
@@ -67,7 +69,7 @@ local ordered_weapons = {
                 resultWeaponType = 2,
                 enabledByDefault = false,
                 modeHint = "自由态受击时自动跳到见切斩",
-                description = "默认只在自由态触发；也可切到全动作模式，在普通动作受击时更激进地自动见切，但会保护居合、神威居合、水月、刚气刃斩和手动见切链。触发后只跳见切动作并拦截本次伤害，不额外补奖励。"
+                description = "默认只在自由态触发；也可切到全动作模式，在普通动作受击时更激进地自动见切，但会保护居合、神威居合、水月、刚气刃斩和手动见切链。触发后会尝试进入原版见切成功路线，不手动补数值奖励。"
             }
         }
     },
