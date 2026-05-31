@@ -15,9 +15,22 @@ local ordered_weapons = {
                 rewardSimulationMode = "longsword_iai_full",
                 rewardSimulationEnabledByDefault = true,
                 rewardSimulationAlwaysOn = true,
-                autoIaiMode = "longsword_special_sheathe_auto_counter",
-                autoIaiEnabledByDefault = false,
-                autoOptionLabel = "自动居合",
+                successNodeId = 2004603551,
+                mrSuccessNodeId = 3569005589,
+                resultMotionId = 155,
+                resultWeaponType = 2,
+                sliderLabel = "GP结束帧",
+                min = 0,
+                max = 120,
+                default = 18,
+                enabledByDefault = false,
+                modeHint = "直接覆盖 PlayerFsm2ActionSeeThroughAttack 的 _EndFrame",
+                description = "当前已确认条目：来自 longsword dump 与 Endless Longsword 参考实现，对应居合气刃斩成功窗口。默认原值为 18。启用后会额外开启居合成功奖励模拟。"
+            },
+            {
+                id = "special_sheathe_auto_iai",
+                label = "特殊纳刀自动居合",
+                featureOnly = true,
                 successNodeId = 2004603551,
                 mrSuccessNodeId = 3569005589,
                 specialSheatheReadyNodeId = 1498247531,
@@ -27,13 +40,22 @@ local ordered_weapons = {
                 autoIaiTargetMotionId = 155,
                 resultMotionId = 155,
                 resultWeaponType = 2,
-                sliderLabel = "GP结束帧",
-                min = 0,
-                max = 120,
                 default = 18,
                 enabledByDefault = false,
-                modeHint = "直接覆盖 PlayerFsm2ActionSeeThroughAttack 的 _EndFrame",
-                description = "当前已确认条目：来自 longsword dump 与 Endless Longsword 参考实现，对应居合气刃斩成功窗口。默认原值为 18。可额外开启“成功奖励模拟”和“特殊纳刀自动居合”实验功能。"
+                modeHint = "在特殊纳刀待机节点受击时自动跳到居合气刃斩",
+                description = "独立于居合气刃斩 GP 改帧。开启后，在 atk.atk151.atk_152 待机时受击会自动推进到 atk.atk151.atk_155，并复用居合成功奖励模拟链。"
+            },
+            {
+                id = "free_state_auto_foresight",
+                label = "自由态自动见切",
+                featureOnly = true,
+                autoForesightMode = "longsword_free_state_auto_foresight",
+                autoForesightTargetNodeId = 2268203994,
+                autoForesightTargetNodeName = "atk.atk_128.atk_138",
+                resultWeaponType = 2,
+                enabledByDefault = false,
+                modeHint = "持刀待机受击时自动跳到见切斩",
+                description = "只在持刀自由态触发：武器已拔出，并且当前节点是 atk.atk_wait 或其子节点。触发后只跳见切动作并拦截本次伤害，不额外补奖励。"
             }
         }
     },

@@ -177,6 +177,17 @@ local function get_player_weapon_type()
     return master_player:get_field("_playerWeaponType")
 end
 
+local function is_player_weapon_drawn()
+    local master_player = get_master_player()
+    if not master_player then
+        return false
+    end
+
+    return safe_call(function()
+        return master_player:isWeaponOn()
+    end) == true
+end
+
 local function get_motion_id()
     local master_player = get_master_player()
     if not master_player then
@@ -243,16 +254,6 @@ local function is_bow_auto_dodgebolt_window(action_id)
     return action_id >= 121 and action_id <= 123
 end
 
-local function is_lance_auto_instant_block_window()
-    local action_bank = get_tracked_action_bank()
-    local node_name = runtime_state.lastKnownNodeName
-    if action_bank ~= 100 or node_name == nil then
-        return false
-    end
-
-    return string.find(node_name, "atk%.", 1) ~= nil
-end
-
 local function get_current_node_id()
     local behavior_tree = get_cached_behavior_tree()
     if behavior_tree then
@@ -310,6 +311,23 @@ local function get_current_node_name()
     end
 
     return runtime_state.lastKnownNodeName
+end
+
+local function is_weapon_drawn_free_state()
+    if not is_player_weapon_drawn() then
+        return false
+    end
+
+    local node_name = get_current_node_name()
+    if node_name == nil then
+        return false
+    end
+
+    return node_name == "atk.atk_wait" or string.sub(node_name, 1, 13) == "atk.atk_wait."
+end
+
+local function is_lance_auto_instant_block_window()
+    return is_weapon_drawn_free_state()
 end
 
 local function get_current_node_action_type_names()
@@ -431,10 +449,6 @@ local function ensure_move_state(weapon_type, move_def)
         move_state.rewardSimulationEnabled = true
     end
 
-    if move_def.autoIaiMode ~= nil and move_state.autoIaiEnabled == nil then
-        move_state.autoIaiEnabled = move_def.autoIaiEnabledByDefault or false
-    end
-
     if move_def.autoDodgeMode ~= nil and move_state.autoDodgeEnabled == nil then
         move_state.autoDodgeEnabled = move_def.autoDodgeEnabledByDefault or false
     end
@@ -485,6 +499,19 @@ local function ensure_settings_shape()
 
         for _, move_def in ipairs(weapon_def.moves) do
             ensure_move_state(weapon_def.weaponType, move_def)
+        end
+
+        if weapon_def.weaponType == 2 then
+            local iai_state = weapon_settings["iai_spirit_slash_counter"]
+            local auto_iai_state = weapon_settings["special_sheathe_auto_iai"]
+            if type(iai_state) == "table"
+                and type(auto_iai_state) == "table"
+                and iai_state.autoIaiEnabled == true
+                and auto_iai_state._migratedFromAutoIai ~= true
+            then
+                auto_iai_state.enabled = true
+                auto_iai_state._migratedFromAutoIai = true
+            end
         end
 
         -- 留空没问题，但保证这个武器类型对应的表存在，后续扩展时更稳。
@@ -565,7 +592,7 @@ local function collect_active_overrides(active_weapon_type)
 
         for _, move_def in ipairs(weapon_def.moves) do
             local move_state = weapon_settings[move_def.id]
-            if move_state and move_state.enabled then
+            if move_state and move_state.enabled and move_def.valueMode ~= nil then
                 for _, action_index in ipairs(get_move_action_indices(move_def)) do
                     desired[action_index] = {
                         moveDef = move_def,
@@ -593,10 +620,6 @@ local function reset_move_state(move_def, move_state)
 
     if move_def.rewardSimulationAlwaysOn == true then
         move_state.rewardSimulationEnabled = true
-    end
-
-    if move_def.autoIaiMode ~= nil then
-        move_state.autoIaiEnabled = move_def.autoIaiEnabledByDefault or false
     end
 
     if move_def.autoDodgeMode ~= nil then
@@ -628,13 +651,13 @@ local function find_move_definition(weapon_type, move_id)
     return nil
 end
 
-local function get_longsword_iai_move_config()
-    local move_def = find_move_definition(2, "iai_spirit_slash_counter")
+local function get_enabled_move_config(weapon_type, move_id)
+    local move_def = find_move_definition(weapon_type, move_id)
     if not move_def then
         return nil
     end
 
-    local move_state = ensure_move_state(2, move_def)
+    local move_state = ensure_move_state(weapon_type, move_def)
     if not settings.modEnabled or not move_state.enabled then
         return nil
     end
@@ -643,6 +666,10 @@ local function get_longsword_iai_move_config()
         moveDef = move_def,
         moveState = move_state
     }
+end
+
+local function get_longsword_iai_move_config()
+    return get_enabled_move_config(2, "iai_spirit_slash_counter")
 end
 
 local function get_longsword_iai_reward_config()
@@ -662,13 +689,12 @@ local function get_longsword_iai_reward_config()
     return config
 end
 
-local function get_longsword_iai_auto_config()
-    local config = get_longsword_iai_move_config()
-    if not config or not config.moveState.autoIaiEnabled then
-        return nil
-    end
+local function get_longsword_auto_iai_config()
+    return get_enabled_move_config(2, "special_sheathe_auto_iai")
+end
 
-    return config
+local function get_longsword_auto_foresight_config()
+    return get_enabled_move_config(2, "free_state_auto_foresight")
 end
 
 local function get_bow_dodgebolt_config()
@@ -889,7 +915,8 @@ local function has_enabled_auto_features(weapon_type)
     end
 
     if weapon_type == 2 then
-        return get_longsword_iai_auto_config() ~= nil
+        return get_longsword_auto_iai_config() ~= nil
+            or get_longsword_auto_foresight_config() ~= nil
             or get_longsword_iai_reward_config() ~= nil
             or get_longsword_iai_move_config() ~= nil
     end
@@ -953,13 +980,14 @@ local function refresh_runtime_cache()
     local weapon_type = get_player_weapon_type()
     local should_refresh_longsword = weapon_type == 2 and (
         get_longsword_iai_move_config() ~= nil
+        or get_longsword_auto_iai_config() ~= nil
+        or get_longsword_auto_foresight_config() ~= nil
         or runtime_state.pendingLongSwordIaiReward ~= nil
         or runtime_state.activeLongSwordIaiAttempt ~= nil
         or runtime_state.activeLongSwordSpecialSheatheAttempt ~= nil
     )
     local should_refresh_lance = weapon_type == 7 and get_lance_instant_block_auto_config() ~= nil
-    local should_read_behavior_tree = should_refresh_longsword
-        or (should_refresh_lance and runtime_state.currentActionBank == 100)
+    local should_read_behavior_tree = should_refresh_longsword or should_refresh_lance
 
     runtime_state.cachedBehaviorTree = nil
     runtime_state.cachedTreeObject = nil
@@ -990,7 +1018,7 @@ local function refresh_runtime_cache()
         runtime_state.lastKnownMotionFrame = get_motion_frame()
     end
 
-    if should_refresh_lance and runtime_state.currentActionBank == 100 and current_node_id ~= nil then
+    if (should_refresh_longsword or should_refresh_lance) and current_node_id ~= nil then
         runtime_state.lastKnownNodeName = get_node_name_by_id(current_node_id)
     end
 end
@@ -1003,7 +1031,7 @@ local function create_longsword_iai_attempt(move_def, move_state, motion_frame, 
         successNodeId = move_def.successNodeId,
         mrSuccessNodeId = move_def.mrSuccessNodeId,
         windowStart = 0,
-        windowEnd = move_state.value,
+        windowEnd = move_state.value or move_def.default or 18,
         consumed = false,
         rewardResolved = false,
         manualFallbackReward = false,
@@ -1254,7 +1282,7 @@ local function process_pending_longsword_iai_reward()
     end
 
     local config = pending.sourceTag == "auto_special_sheathe"
-        and get_longsword_iai_move_config()
+        and get_longsword_auto_iai_config()
         or get_longsword_iai_reward_config()
     if not config then
         clear_longsword_iai_runtime()
@@ -1314,14 +1342,12 @@ local function refresh_longsword_iai_runtime()
     local weapon_type = runtime_state.lastKnownWeaponType
     local motion_id = runtime_state.lastKnownMotionId
     local current_node_id = runtime_state.lastKnownNodeId
-    local current_node_name = runtime_state.lastKnownNodeName
     local motion_frame = runtime_state.lastKnownMotionFrame
 
-    local move_config = get_longsword_iai_move_config()
     local reward_config = get_longsword_iai_reward_config()
-    local auto_config = get_longsword_iai_auto_config()
+    local auto_config = get_longsword_auto_iai_config()
 
-    if not move_config or weapon_type ~= move_config.moveDef.resultWeaponType then
+    if weapon_type ~= 2 then
         clear_longsword_iai_runtime()
         return
     end
@@ -1343,7 +1369,7 @@ local function refresh_longsword_iai_runtime()
             attempt = runtime_state.activeLongSwordIaiAttempt
         end
 
-        attempt.windowEnd = reward_config.moveState.value
+        attempt.windowEnd = reward_config.moveState.value or reward_config.moveDef.default or 18
         attempt.lastMotionFrame = motion_frame
     elseif not runtime_state.pendingLongSwordIaiReward then
         runtime_state.activeLongSwordIaiAttempt = nil
@@ -1443,18 +1469,12 @@ local function draw_weapon_moves(weapon_def)
             toggle, move_state.enabled = imgui.checkbox("启用##move_enabled_" .. weapon_def.weaponType .. "_" .. move_def.id, move_state.enabled)
             changed = changed or toggle
 
-            toggle, move_state.value = imgui.slider_int(
-                (move_def.sliderLabel or "数值") .. "##move_value_" .. weapon_def.weaponType .. "_" .. move_def.id,
-                move_state.value,
-                move_def.min,
-                move_def.max
-            )
-            changed = changed or toggle
-
-            if move_def.autoIaiMode ~= nil then
-                toggle, move_state.autoIaiEnabled = imgui.checkbox(
-                    (move_def.autoOptionLabel or "自动居合") .. "##move_auto_iai_enabled_" .. weapon_def.weaponType .. "_" .. move_def.id,
-                    move_state.autoIaiEnabled
+            if move_def.valueMode ~= nil then
+                toggle, move_state.value = imgui.slider_int(
+                    (move_def.sliderLabel or "数值") .. "##move_value_" .. weapon_def.weaponType .. "_" .. move_def.id,
+                    move_state.value,
+                    move_def.min,
+                    move_def.max
                 )
                 changed = changed or toggle
             end
@@ -1613,7 +1633,24 @@ sdk.hook(
             end
         end
 
-        local auto_config = get_longsword_iai_auto_config()
+        if weapon_type == 2 then
+            local foresight_auto_config = get_longsword_auto_foresight_config()
+            if foresight_auto_config
+                and damage_flow_type == 0
+                and runtime_state.pendingLongSwordIaiReward == nil
+                and is_weapon_drawn_free_state()
+            then
+                local target_node_id = foresight_auto_config.moveDef.autoForesightTargetNodeId
+                local signature = build_auto_defense_signature(weapon_type, owner_type, damage_flow_type)
+                if can_trigger_auto_defense(weapon_type, signature)
+                    and try_jump_to_node(target_node_id) then
+                    mark_auto_defense_triggered(weapon_type, signature, target_node_id)
+                    return sdk.to_ptr(2)
+                end
+            end
+        end
+
+        local auto_config = get_longsword_auto_iai_config()
         local special_sheathe_attempt = runtime_state.activeLongSwordSpecialSheatheAttempt
         if auto_config and special_sheathe_attempt and not special_sheathe_attempt.consumed then
             if weapon_type == auto_config.moveDef.resultWeaponType
