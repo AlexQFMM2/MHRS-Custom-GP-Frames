@@ -368,6 +368,15 @@ local function is_longsword_auto_foresight_protected_node_name(node_name)
     return false
 end
 
+local function is_longsword_foresight_start_node_name(node_name, trigger_node_name)
+    if node_name == nil or trigger_node_name == nil then
+        return false
+    end
+
+    return node_name == trigger_node_name
+        or starts_with(node_name, trigger_node_name .. ".")
+end
+
 local function mark_free_state_seen(weapon_type, node_id, node_name)
     runtime_state.lastFreeStateWeaponType = weapon_type
     runtime_state.lastFreeStateNodeId = node_id
@@ -1514,7 +1523,11 @@ local function stage_longsword_foresight_reward(config, owner_type)
         triggerNodeName = config.moveDef.autoForesightTargetNodeName,
         successRouteNodeId = config.moveDef.autoForesightSuccessRouteNodeId,
         successRouteNodeName = config.moveDef.autoForesightSuccessRouteNodeName,
-        validationFramesRemaining = 3,
+        successRouteStartFrame = config.moveDef.autoForesightSuccessRouteStartFrame or 38,
+        successRouteEndFrame = config.moveDef.autoForesightSuccessRouteEndFrame or 52,
+        validationFramesRemaining = config.moveDef.autoForesightSuccessRouteTimeoutFrames or 90,
+        arrivalFramesRemaining = config.moveDef.autoForesightSuccessRouteArrivalFrames or 5,
+        seenTriggerNode = false,
         jumpAttempts = 0
     }
     runtime_state.nextAttemptId = runtime_state.nextAttemptId + 1
@@ -1530,6 +1543,48 @@ local function process_pending_longsword_foresight_reward()
 
     if runtime_state.lastKnownWeaponType ~= 2 then
         runtime_state.pendingLongSwordForesightReward = nil
+        return
+    end
+
+    local current_node_name = runtime_state.lastKnownNodeName or get_current_node_name()
+    local motion_frame = runtime_state.lastKnownMotionFrame
+    local is_foresight_start_node = is_longsword_foresight_start_node_name(current_node_name, pending.triggerNodeName)
+
+    if is_foresight_start_node then
+        pending.seenTriggerNode = true
+    elseif pending.seenTriggerNode then
+        if current_node_name ~= nil and not starts_with(current_node_name, "atk.atk_147") then
+            runtime_state.pendingLongSwordForesightReward = nil
+            return
+        end
+    else
+        pending.arrivalFramesRemaining = (pending.arrivalFramesRemaining or 1) - 1
+        if pending.arrivalFramesRemaining <= 0 then
+            runtime_state.pendingLongSwordForesightReward = nil
+            return
+        end
+    end
+
+    if not is_foresight_start_node or motion_frame == nil then
+        pending.validationFramesRemaining = (pending.validationFramesRemaining or 1) - 1
+        if pending.validationFramesRemaining <= 0 then
+            runtime_state.pendingLongSwordForesightReward = nil
+        end
+
+        return
+    end
+
+    if pending.successRouteEndFrame ~= nil and motion_frame > pending.successRouteEndFrame then
+        runtime_state.pendingLongSwordForesightReward = nil
+        return
+    end
+
+    if motion_frame < (pending.successRouteStartFrame or 38) then
+        pending.validationFramesRemaining = (pending.validationFramesRemaining or 1) - 1
+        if pending.validationFramesRemaining <= 0 then
+            runtime_state.pendingLongSwordForesightReward = nil
+        end
+
         return
     end
 

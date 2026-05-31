@@ -36,7 +36,7 @@
   - 自动复用同一套成功奖励模拟链
 - 太刀自由态自动见切（实验）
   - 移动、跑动、回避等自由态，或可选全动作范围内受击时自动推进到见切节点
-  - 自动触发后尝试进入原版见切成功路线，不手动模拟数值奖励
+  - 自动触发后会等见切起手动作进入成功窗口，再尝试推进到原版见切成功路线
 - 弓自动闪身（实验）
   - 参考 `AutoDodgeBolt.lua`
   - 受击时自动推进到 `DodgeBolt` 节点
@@ -134,6 +134,7 @@
   - `atk.atk_147.atk_147`
 - 自动见切成功路线：
   - `atk.atk_147.atk_147_end`
+  - 延迟到见切起手动作约第 `38` 帧后再尝试进入，避免跳过后退动作
 
 - 武器：`弓`
 - 招式：`闪身箭斩`
@@ -351,11 +352,43 @@
 
 - `atk.atk_147.atk_147`
 
-自动触发后，脚本会在短时间内继续尝试推进到原版见切成功后的路线：
+自动触发后，脚本会保留见切起手动作，等动作帧进入原版成功/派生窗口后，再尝试推进到原版见切成功后的路线：
 
 - `atk.atk_147.atk_147_end`
 
+当前默认窗口来自 dump 中 `atk.atk_147.atk_147` 的派生/取消窗口：
+
+- 起跳帧：`38`
+- 窗口末尾：`52`
+
 这项功能不手动改练气等级、不手动补圆月追加伤害，也不手动补派生资格；回砍、圆月和大回环/气刃无双斩派生尽量交给原版成功路线处理。
+
+## 圆月后续修改记录
+
+当前先记录调研方向，持续时间、范围和 BGM 暂不在本次修复里改。
+
+- 圆月本体创建节点：
+  - `atk.WireReplaceF_MR.plw_LongSword_100_160`
+- 关键 action：
+  - `9529 / PlayerFsm2ActionLongSwordCreateSpacingShell`
+- 圆月本体 shell 类型应为：
+  - `LongSwordShell010`
+- `LongSwordShell010MoveParamUserData` 里与后续修改相关的字段包括：
+  - `_lifeTime`
+  - `_Range`
+  - `_RangeY`
+  - `_WarningRange`
+- 圆月追击伤害使用：
+  - `LongSwordShell020`
+- 太刀 UserData 中已经能看到圆月追击倍率映射：
+  - `_SpacingRateSeeThroughAttack = 7`
+
+BGM 方向先按两段处理：
+
+- 开始检测：进入 `WireReplaceF_MR.plw_LongSword_100_160`，或检测到 `PlayerFsm2ActionLongSwordCreateSpacingShell`
+- 结束检测：优先查 `LongSwordShellManager` 是否仍有玩家的 `LongSwordShell010`；如果读不到稳定接口，再用圆月 `_lifeTime` 或配置秒数兜底停止
+
+播放层面优先调研游戏内 Wwise 事件；如果 REFramework Lua 不能直接播放自定义音乐文件，再考虑外部播放器或插件方案。
 
 ## 后续如果要继续支持“太刀 -> 见切 / 更多 GP”该怎么加
 
