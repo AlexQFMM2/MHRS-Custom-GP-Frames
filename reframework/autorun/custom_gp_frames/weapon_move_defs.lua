@@ -85,6 +85,10 @@ local ordered_weapons = {
                 debugPrintOption = true,
                 debugPrintLabel = "调试打印",
                 debugPrintEnabledByDefault = false,
+                autoRefreshOption = true,
+                autoRefreshLabel = "自动续圆月",
+                autoRefreshEnabledByDefault = true,
+                autoRefreshIntervalFrames = 12,
                 launchNodeId = 3736120076,
                 launchNodeName = "atk.WireReplaceF_MR.plw_LongSword_100_160",
                 visualScaleActionIndex = 9531,
@@ -147,7 +151,7 @@ local ordered_weapons = {
                 },
                 enabledByDefault = false,
                 modeHint = "修改圆月 LongSwordShell010 的持续时间和范围倍率",
-                description = "测试中：运行时捕获圆月本体 LongSwordShell010，并按倍率修改 _lifeTime、_Range、_RangeY、_WarningRange。视觉圆圈同步仍在验证中；可开启调试打印查看圆月启动、action 和 shell 参数快照。默认倍率 1.00，不直接写死原版数值。"
+                description = "测试中：运行时捕获圆月本体 LongSwordShell010，并按倍率修改 _lifeTime、_Range、_RangeY、_WarningRange。默认按参考 mod 的 createSpacingShell 思路自动续圆月；视觉圆圈同步仍在验证中。"
             }
         }
     },

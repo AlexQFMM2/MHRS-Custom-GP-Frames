@@ -390,8 +390,11 @@
 
 开启后，脚本会在运行时捕获圆月本体 `LongSwordShell010`，并按倍率修改相关字段。这里使用倍率而不是写死秒数/半径，是为了保留游戏当前版本的原始参数作为基准。视觉圆圈同步仍在测试中，当前保留 `9531 / PlayerFsm2ActionSetEffectAndScale` 的实验写入，但不再把它视为已确认方案。
 
+默认还会开启 `自动续圆月`。这项参考 `Harvest_Moon.lua` 的做法，在本地玩家太刀 `update` 中每 12 帧调用一次 `snow.player.LongSword:createSpacingShell()`，用反复创建/刷新圆月本体的方式实现近似永续。
+
 可调字段：
 
+- `自动续圆月`
 - `_moveParam._lifeTime`
 - `_moveParam._Range`
 - `_moveParam._RangeY`
@@ -404,7 +407,8 @@
 
 - `调试打印`：开启后先写入一条 heartbeat；进入圆月启动节点或首次捕获 `LongSwordShell010` 时，把 `[CustomGP][HarvestMoon]` 快照写入日志文件。
 - 优先日志路径：`reframework/data/CustomGPFrames_harvest_moon_debug.log`；如果该路径无法创建，会退到游戏根目录的 `CustomGPFrames_harvest_moon_debug.log`。
-- 快照包含当前节点、motion、`9529/9530/9531` action 字段、shell `_lifeTime`、`_userData/_moveParam`、以及 `_lifeTime/_Range/_RangeY/_WarningRange` 写入前后值。
+- 调试会额外 hook `snow.player.LongSword:createSpacingShell`，也就是圆月本体创建入口；即使没有读到 FSM 节点，也能记录创建调用。
+- 快照包含当前节点、motion、`9529/9530/9531` action 字段、`createSpacingShell` 调用、shell `_lifeTime`、`_userData/_moveParam`、以及 `_lifeTime/_Range/_RangeY/_WarningRange` 写入前后值。
 
 关闭功能或关闭总开关后，脚本会尽量把已捕获对象恢复为本次会话记录到的原始值。
 
