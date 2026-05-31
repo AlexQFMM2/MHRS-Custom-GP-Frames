@@ -97,6 +97,8 @@ local runtime_state = {
     harvestMoonPendingRecreateAt = nil,
     harvestMoonLastRecreateAt = nil,
     harvestMoonRecreateInProgress = false,
+    harvestMoonLastTestResult = nil,
+    harvestMoonLastTestAt = nil,
     nextAttemptId = 1
 }
 
@@ -1549,6 +1551,58 @@ local function process_longsword_harvest_moon_recreate()
     end
 end
 
+local function set_longsword_harvest_moon_test_result(message)
+    runtime_state.harvestMoonLastTestResult = message
+    runtime_state.harvestMoonLastTestAt = os.clock()
+end
+
+local function test_create_longsword_harvest_moon()
+    if get_player_weapon_type() ~= 2 then
+        set_longsword_harvest_moon_test_result("测试结果: 请先装备太刀")
+        return false
+    end
+
+    local create_spacing_shell_method = runtime_state.harvestMoonCreateSpacingShellMethod
+    if create_spacing_shell_method == nil then
+        local longsword_type = sdk.find_type_definition("snow.player.LongSword")
+        create_spacing_shell_method = longsword_type and longsword_type:get_method("createSpacingShell") or nil
+        runtime_state.harvestMoonCreateSpacingShellMethod = create_spacing_shell_method
+    end
+
+    if create_spacing_shell_method == nil then
+        set_longsword_harvest_moon_test_result("测试结果: 找不到 createSpacingShell")
+        return false
+    end
+
+    local player_longsword = runtime_state.harvestMoonLastMasterLongSword
+    if not is_master_longsword_object(player_longsword) then
+        player_longsword = get_master_player()
+    end
+
+    if not is_master_longsword_object(player_longsword) then
+        set_longsword_harvest_moon_test_result("测试结果: 找不到本地太刀对象")
+        return false
+    end
+
+    runtime_state.harvestMoonRecreateInProgress = true
+    local created = safe_call(function()
+        create_spacing_shell_method:call(player_longsword)
+        return true
+    end) == true
+    runtime_state.harvestMoonRecreateInProgress = false
+
+    if created then
+        begin_longsword_harvest_moon_capture(player_longsword)
+        runtime_state.harvestMoonLastMasterLongSword = player_longsword
+        runtime_state.harvestMoonLastRecreateAt = os.clock()
+        set_longsword_harvest_moon_test_result("测试结果: 已调用 createSpacingShell")
+        return true
+    end
+
+    set_longsword_harvest_moon_test_result("测试结果: 调用失败")
+    return false
+end
+
 local function install_longsword_harvest_moon_create_hook()
     if runtime_state.harvestMoonCreateHookInstalled then
         return
@@ -2210,6 +2264,16 @@ local function draw_weapon_moves(weapon_def)
                 if trigger_mode_changed then
                     move_state.triggerMode = move_def.triggerModeOptions[trigger_mode_index].id
                     changed = true
+                end
+            end
+
+            if weapon_def.weaponType == 2 and move_def.id == "harvest_moon_auto_recreate" then
+                if imgui.button("测试生成圆月##move_harvest_moon_test_" .. weapon_def.weaponType .. "_" .. move_def.id) then
+                    test_create_longsword_harvest_moon()
+                end
+
+                if runtime_state.harvestMoonLastTestResult ~= nil then
+                    imgui.text(runtime_state.harvestMoonLastTestResult)
                 end
             end
 
