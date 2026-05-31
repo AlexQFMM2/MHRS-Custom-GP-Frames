@@ -622,6 +622,20 @@ local function ensure_move_state(weapon_type, move_def)
             if move_state.shellParamValues[value_def.id] == nil then
                 move_state.shellParamValues[value_def.id] = value_def.default
             end
+
+            if type(value_def.options) == "table" then
+                local option_found = false
+                for _, option in ipairs(value_def.options) do
+                    if move_state.shellParamValues[value_def.id] == option.value then
+                        option_found = true
+                        break
+                    end
+                end
+
+                if not option_found then
+                    move_state.shellParamValues[value_def.id] = value_def.default
+                end
+            end
         end
 
         for value_id, _ in pairs(move_state.shellParamValues) do
@@ -917,6 +931,33 @@ local function get_trigger_mode_labels(move_def)
 
     for _, option in ipairs(move_def.triggerModeOptions) do
         table.insert(labels, option.label)
+    end
+
+    return labels
+end
+
+local function get_shell_param_option_index(value_def, current_value)
+    if type(value_def.options) ~= "table" then
+        return 1
+    end
+
+    for index, option in ipairs(value_def.options) do
+        if option.value == current_value then
+            return index
+        end
+    end
+
+    return 1
+end
+
+local function get_shell_param_option_labels(value_def)
+    local labels = {}
+    if type(value_def.options) ~= "table" then
+        return labels
+    end
+
+    for _, option in ipairs(value_def.options) do
+        table.insert(labels, option.label or tostring(option.value))
     end
 
     return labels
@@ -2056,16 +2097,32 @@ local function draw_weapon_moves(weapon_def)
 
                 for _, value_def in ipairs(move_def.shellParamValues) do
                     local current_value = move_state.shellParamValues[value_def.id] or value_def.default
-                    toggle, current_value = imgui.slider_float(
-                        value_def.label .. "##move_shell_param_" .. weapon_def.weaponType .. "_" .. move_def.id .. "_" .. value_def.id,
-                        current_value,
-                        value_def.min,
-                        value_def.max,
-                        value_def.format or "%.2f"
-                    )
-                    if toggle then
-                        move_state.shellParamValues[value_def.id] = current_value
-                        changed = true
+                    if type(value_def.options) == "table" then
+                        local selected_index = get_shell_param_option_index(value_def, current_value)
+                        toggle, selected_index = imgui.combo(
+                            value_def.label .. "##move_shell_param_" .. weapon_def.weaponType .. "_" .. move_def.id .. "_" .. value_def.id,
+                            selected_index,
+                            get_shell_param_option_labels(value_def)
+                        )
+                        if toggle then
+                            local selected_option = value_def.options[selected_index]
+                            if selected_option ~= nil then
+                                move_state.shellParamValues[value_def.id] = selected_option.value
+                                changed = true
+                            end
+                        end
+                    else
+                        toggle, current_value = imgui.slider_float(
+                            value_def.label .. "##move_shell_param_" .. weapon_def.weaponType .. "_" .. move_def.id .. "_" .. value_def.id,
+                            current_value,
+                            value_def.min,
+                            value_def.max,
+                            value_def.format or "%.2f"
+                        )
+                        if toggle then
+                            move_state.shellParamValues[value_def.id] = current_value
+                            changed = true
+                        end
                     end
                 end
             end

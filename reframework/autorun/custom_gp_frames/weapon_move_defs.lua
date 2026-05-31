@@ -89,9 +89,19 @@ local ordered_weapons = {
                         field = "_lifeTime",
                         target = "move_param",
                         default = 1.0,
-                        min = 0.1,
-                        max = 5.0,
-                        format = "%.2f"
+                        options = {
+                            { value = 0.5, label = "0.5倍" },
+                            { value = 1.0, label = "1倍" },
+                            { value = 2.0, label = "2倍" },
+                            { value = 3.0, label = "3倍" },
+                            { value = 4.0, label = "4倍" },
+                            { value = 5.0, label = "5倍" },
+                            { value = 6.0, label = "6倍" },
+                            { value = 7.0, label = "7倍" },
+                            { value = 8.0, label = "8倍" },
+                            { value = 9.0, label = "9倍" },
+                            { value = 10.0, label = "10倍" }
+                        }
                     }
                 },
                 enabledByDefault = false,
