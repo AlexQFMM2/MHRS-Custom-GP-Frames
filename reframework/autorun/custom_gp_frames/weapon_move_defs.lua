@@ -76,27 +76,12 @@ local ordered_weapons = {
             },
             {
                 id = "harvest_moon_custom_params",
-                label = "圆月参数 [测试中]",
+                label = "圆月持续时间",
                 featureOnly = true,
                 shellParamMode = "longsword_harvest_moon",
                 shellTypeName = "snow.shell.LongSwordShell010",
                 shellMainUserDataField = "_userData",
                 shellMoveParamField = "_moveParam",
-                debugPrintOption = true,
-                debugPrintLabel = "调试打印",
-                debugPrintEnabledByDefault = false,
-                autoRefreshOption = true,
-                autoRefreshLabel = "自动续圆月",
-                autoRefreshEnabledByDefault = true,
-                autoRefreshIntervalFrames = 12,
-                launchNodeId = 3736120076,
-                launchNodeName = "atk.WireReplaceF_MR.plw_LongSword_100_160",
-                visualScaleActionIndex = 9531,
-                visualScaleMultiplierParamId = "rangeMultiplier",
-                visualScaleFields = {
-                    "_BaseScale",
-                    "_CurrentScale"
-                },
                 shellParamValues = {
                     {
                         id = "lifeTimeMultiplier",
@@ -107,51 +92,11 @@ local ordered_weapons = {
                         min = 0.1,
                         max = 5.0,
                         format = "%.2f"
-                    },
-                    {
-                        id = "rangeMultiplier",
-                        label = "水平范围倍率",
-                        field = "_Range",
-                        target = "move_param",
-                        default = 1.0,
-                        min = 0.1,
-                        max = 5.0,
-                        format = "%.2f"
-                    },
-                    {
-                        id = "rangeYMultiplier",
-                        label = "垂直范围倍率",
-                        field = "_RangeY",
-                        target = "move_param",
-                        default = 1.0,
-                        min = 0.1,
-                        max = 5.0,
-                        format = "%.2f"
-                    },
-                    {
-                        id = "warningRangeMultiplier",
-                        label = "警告圈范围倍率",
-                        field = "_WarningRange",
-                        target = "move_param",
-                        default = 1.0,
-                        min = 0.1,
-                        max = 5.0,
-                        format = "%.2f"
-                    },
-                    {
-                        id = "shellLifeTimeMultiplier",
-                        label = "实例存活时间倍率",
-                        field = "_lifeTime",
-                        target = "shell",
-                        default = 1.0,
-                        min = 0.1,
-                        max = 5.0,
-                        format = "%.2f"
                     }
                 },
                 enabledByDefault = false,
-                modeHint = "修改圆月 LongSwordShell010 的持续时间和范围倍率",
-                description = "测试中：运行时捕获圆月本体 LongSwordShell010，并按倍率修改 _lifeTime、_Range、_RangeY、_WarningRange。默认按参考 mod 的 createSpacingShell 思路自动续圆月；视觉圆圈同步仍在验证中。"
+                modeHint = "只修改圆月 LongSwordShell010 的持续时间倍率",
+                description = "保守功能：运行时捕获圆月本体 LongSwordShell010，只按倍率修改 _moveParam._lifeTime。范围、视觉圈、自动续圆月和调试日志都已移除，避免额外性能开销。"
             }
         }
     },

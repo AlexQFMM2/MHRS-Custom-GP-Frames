@@ -27,10 +27,6 @@ end
 local defs = require("custom_gp_frames/weapon_move_defs")
 
 local config_path = "CustomGPFrames.json"
-local harvest_moon_debug_log_paths = {
-    "reframework/data/CustomGPFrames_harvest_moon_debug.log",
-    "CustomGPFrames_harvest_moon_debug.log"
-}
 local ordered_weapons = defs.ordered_weapons
 local weapon_by_type = defs.weapon_by_type
 local weapon_combo_labels = defs.weapon_combo_labels
@@ -86,25 +82,9 @@ local runtime_state = {
     nodeNameById = {},
     autoDefenseState = {},
     harvestMoonOriginalParams = setmetatable({}, { __mode = "k" }),
-    harvestMoonOriginalShellValues = setmetatable({}, { __mode = "k" }),
-    harvestMoonOriginalVisualScale = setmetatable({}, { __mode = "k" }),
     harvestMoonCapturedShells = setmetatable({}, { __mode = "k" }),
-    harvestMoonDebugSeenShells = setmetatable({}, { __mode = "k" }),
     harvestMoonHooksInstalled = false,
-    harvestMoonCreateShellHookInstalled = false,
-    harvestMoonAutoRefreshHookInstalled = false,
     harvestMoonPatchedThisFrame = false,
-    harvestMoonLastShell = nil,
-    harvestMoonLastLaunchNodeActive = false,
-    harvestMoonLaunchDebugCount = 0,
-    harvestMoonCreateShellDebugCount = 0,
-    harvestMoonAutoRefreshTick = 0,
-    harvestMoonAutoRefreshReady = false,
-    harvestMoonAutoRefreshCallCount = 0,
-    harvestMoonLastVisualDebugSignature = nil,
-    harvestMoonDebugLogInitialized = false,
-    harvestMoonDebugLogPath = nil,
-    harvestMoonDebugHeartbeatWritten = false,
     nextAttemptId = 1
 }
 
@@ -132,39 +112,6 @@ local function safe_call(fn)
     end
 
     return nil
-end
-
-local function custom_gp_log(message)
-    local text = tostring(message)
-    local mode = runtime_state.harvestMoonDebugLogInitialized and "a" or "w"
-    local file = nil
-    local opened_path = runtime_state.harvestMoonDebugLogPath
-
-    if opened_path ~= nil then
-        file = io.open(opened_path, mode)
-    end
-
-    if file == nil then
-        for _, path in ipairs(harvest_moon_debug_log_paths) do
-            file = io.open(path, mode)
-            if file ~= nil then
-                runtime_state.harvestMoonDebugLogPath = path
-                opened_path = path
-                break
-            end
-        end
-    end
-
-    if file ~= nil then
-        if not runtime_state.harvestMoonDebugLogInitialized then
-            file:write("[CustomGP][HarvestMoon] debug log start\n")
-            file:write("[CustomGP][HarvestMoon] log path=" .. tostring(opened_path) .. "\n")
-            runtime_state.harvestMoonDebugLogInitialized = true
-        end
-
-        file:write(text .. "\n")
-        file:close()
-    end
 end
 
 local function get_display_language()
@@ -669,19 +616,24 @@ local function ensure_move_state(weapon_type, move_def)
             move_state.shellParamValues = {}
         end
 
+        local allowed_shell_params = {}
         for _, value_def in ipairs(move_def.shellParamValues) do
+            allowed_shell_params[value_def.id] = true
             if move_state.shellParamValues[value_def.id] == nil then
                 move_state.shellParamValues[value_def.id] = value_def.default
             end
         end
+
+        for value_id, _ in pairs(move_state.shellParamValues) do
+            if allowed_shell_params[value_id] ~= true then
+                move_state.shellParamValues[value_id] = nil
+            end
+        end
     end
 
-    if move_def.debugPrintOption == true and move_state.debugPrintEnabled == nil then
-        move_state.debugPrintEnabled = move_def.debugPrintEnabledByDefault or false
-    end
-
-    if move_def.autoRefreshOption == true and move_state.autoRefreshEnabled == nil then
-        move_state.autoRefreshEnabled = move_def.autoRefreshEnabledByDefault or false
+    if move_def.id == "harvest_moon_custom_params" then
+        move_state.debugPrintEnabled = nil
+        move_state.autoRefreshEnabled = nil
     end
 
     return move_state
@@ -876,13 +828,6 @@ local function reset_move_state(move_def, move_state)
         end
     end
 
-    if move_def.debugPrintOption == true then
-        move_state.debugPrintEnabled = move_def.debugPrintEnabledByDefault or false
-    end
-
-    if move_def.autoRefreshOption == true then
-        move_state.autoRefreshEnabled = move_def.autoRefreshEnabledByDefault or false
-    end
 end
 
 local function find_move_definition(weapon_type, move_id)
@@ -948,25 +893,6 @@ end
 
 local function get_longsword_harvest_moon_config()
     return get_enabled_move_config(2, "harvest_moon_custom_params")
-end
-
-local function get_longsword_harvest_moon_auto_refresh_config()
-    local config = get_longsword_harvest_moon_config()
-    if config == nil or config.moveState.autoRefreshEnabled ~= true then
-        return nil
-    end
-
-    return config
-end
-
-local function is_longsword_harvest_moon_debug_enabled()
-    local move_def = find_move_definition(2, "harvest_moon_custom_params")
-    if move_def == nil then
-        return false
-    end
-
-    local move_state = ensure_move_state(2, move_def)
-    return settings.modEnabled and move_state.debugPrintEnabled == true
 end
 
 local function get_trigger_mode_index(move_def, move_state)
@@ -1281,8 +1207,6 @@ local function refresh_runtime_cache()
         get_longsword_iai_move_config() ~= nil
         or get_longsword_auto_iai_config() ~= nil
         or get_longsword_auto_foresight_config() ~= nil
-        or get_longsword_harvest_moon_config() ~= nil
-        or is_longsword_harvest_moon_debug_enabled()
         or runtime_state.pendingLongSwordIaiReward ~= nil
         or runtime_state.pendingLongSwordForesightReward ~= nil
         or runtime_state.activeLongSwordIaiAttempt ~= nil
@@ -1415,199 +1339,6 @@ local function get_shell_param_multiplier(move_state, value_def)
     return move_state.shellParamValues[value_def.id] or value_def.default or 1.0
 end
 
-local function get_shell_param_multiplier_by_id(move_state, param_id, default_value)
-    if type(move_state.shellParamValues) ~= "table" then
-        return default_value or 1.0
-    end
-
-    return move_state.shellParamValues[param_id] or default_value or 1.0
-end
-
-local function get_object_type_name(object)
-    if object == nil then
-        return "nil"
-    end
-
-    return safe_call(function()
-        return object:get_type_definition():get_full_name()
-    end) or tostring(object)
-end
-
-local function get_debug_field_value(object, field_name)
-    if object == nil or field_name == nil then
-        return nil
-    end
-
-    return safe_call(function()
-        return object:get_field(field_name)
-    end)
-end
-
-local function format_debug_value(value)
-    if value == nil then
-        return "nil"
-    end
-
-    return tostring(value)
-end
-
-local function get_longsword_harvest_moon_debug_config()
-    if not settings.modEnabled then
-        return nil
-    end
-
-    local move_def = find_move_definition(2, "harvest_moon_custom_params")
-    if move_def == nil then
-        return nil
-    end
-
-    local move_state = ensure_move_state(2, move_def)
-    if move_state.debugPrintEnabled ~= true then
-        return nil
-    end
-
-    return {
-        moveDef = move_def,
-        moveState = move_state
-    }
-end
-
-local function log_harvest_moon_action_snapshot(action_index)
-    local action_obj = get_action(action_index)
-    custom_gp_log("[CustomGP][HarvestMoon] action " .. tostring(action_index)
-        .. " type=" .. get_object_type_name(action_obj))
-
-    local fields = {
-        "v0_Enabled",
-        "v1_ID",
-        "containerID",
-        "_ElementID",
-        "_Frame",
-        "_BaseScale",
-        "_CurrentScale"
-    }
-
-    for _, field_name in ipairs(fields) do
-        local value = get_debug_field_value(action_obj, field_name)
-        if value ~= nil then
-            custom_gp_log("[CustomGP][HarvestMoon] action " .. tostring(action_index)
-                .. "." .. field_name .. "=" .. format_debug_value(value))
-        end
-    end
-end
-
-local function log_harvest_moon_shell_snapshot(shell_object, config, reason)
-    if shell_object == nil then
-        custom_gp_log("[CustomGP][HarvestMoon] shell snapshot skipped: nil shell (" .. tostring(reason) .. ")")
-        return
-    end
-
-    local move_def = config and config.moveDef or find_move_definition(2, "harvest_moon_custom_params")
-    local move_state = config and config.moveState or nil
-    local main_user_data = get_debug_field_value(shell_object, (move_def and move_def.shellMainUserDataField) or "_userData")
-    local move_param = nil
-    if main_user_data ~= nil then
-        move_param = get_debug_field_value(main_user_data, (move_def and move_def.shellMoveParamField) or "_moveParam")
-    end
-
-    custom_gp_log("[CustomGP][HarvestMoon] shell snapshot reason=" .. tostring(reason)
-        .. " shell=" .. tostring(shell_object)
-        .. " type=" .. get_object_type_name(shell_object))
-    custom_gp_log("[CustomGP][HarvestMoon] shell._lifeTime="
-        .. format_debug_value(get_debug_field_value(shell_object, "_lifeTime"))
-        .. " _userData=" .. tostring(main_user_data)
-        .. " _moveParam=" .. tostring(move_param))
-
-    if move_param ~= nil then
-        local fields = {
-            "_lifeTime",
-            "_Range",
-            "_RangeY",
-            "_WarningRange"
-        }
-        for _, field_name in ipairs(fields) do
-            custom_gp_log("[CustomGP][HarvestMoon] moveParam." .. field_name .. "="
-                .. format_debug_value(get_debug_field_value(move_param, field_name)))
-        end
-    end
-
-    if move_state ~= nil and type(move_def.shellParamValues) == "table" then
-        for _, value_def in ipairs(move_def.shellParamValues) do
-            custom_gp_log("[CustomGP][HarvestMoon] uiMultiplier." .. value_def.id .. "="
-                .. format_debug_value(get_shell_param_multiplier(move_state, value_def)))
-        end
-    end
-end
-
-local function log_longsword_harvest_moon_shell_debug_once(shell_object, debug_config, reason)
-    if shell_object == nil or debug_config == nil then
-        return
-    end
-
-    runtime_state.harvestMoonLastShell = shell_object
-    if runtime_state.harvestMoonDebugSeenShells[shell_object] == true then
-        return
-    end
-
-    runtime_state.harvestMoonDebugSeenShells[shell_object] = true
-    log_harvest_moon_shell_snapshot(shell_object, debug_config, reason)
-end
-
-local function log_longsword_harvest_moon_launch(config)
-    runtime_state.harvestMoonLaunchDebugCount = runtime_state.harvestMoonLaunchDebugCount + 1
-    custom_gp_log("[CustomGP][HarvestMoon] launch #" .. tostring(runtime_state.harvestMoonLaunchDebugCount)
-        .. " nodeId=" .. format_debug_value(runtime_state.lastKnownNodeId)
-        .. " nodeName=" .. tostring(runtime_state.lastKnownNodeName)
-        .. " motionId=" .. format_debug_value(runtime_state.lastKnownMotionId)
-        .. " motionFrame=" .. format_debug_value(runtime_state.lastKnownMotionFrame)
-        .. " weaponType=" .. format_debug_value(runtime_state.lastKnownWeaponType)
-        .. " featureEnabled=" .. tostring(config and config.moveState and config.moveState.enabled == true))
-
-    log_harvest_moon_action_snapshot(9529)
-    log_harvest_moon_action_snapshot(9530)
-    log_harvest_moon_action_snapshot(9531)
-    log_harvest_moon_shell_snapshot(runtime_state.harvestMoonLastShell, config, "launch_last_shell")
-end
-
-local function log_longsword_harvest_moon_create_spacing_shell(player_longsword, config)
-    runtime_state.harvestMoonCreateShellDebugCount = runtime_state.harvestMoonCreateShellDebugCount + 1
-
-    local count = runtime_state.harvestMoonCreateShellDebugCount
-    if count > 10 and count % 30 ~= 0 then
-        return
-    end
-
-    custom_gp_log("[CustomGP][HarvestMoon] createSpacingShell #" .. tostring(count)
-        .. " player=" .. tostring(player_longsword)
-        .. " playerType=" .. get_object_type_name(player_longsword)
-        .. " nodeId=" .. format_debug_value(runtime_state.lastKnownNodeId)
-        .. " nodeName=" .. tostring(runtime_state.lastKnownNodeName)
-        .. " motionId=" .. format_debug_value(runtime_state.lastKnownMotionId)
-        .. " motionFrame=" .. format_debug_value(runtime_state.lastKnownMotionFrame)
-        .. " featureEnabled=" .. tostring(config and config.moveState and config.moveState.enabled == true))
-
-    log_harvest_moon_action_snapshot(9529)
-    log_harvest_moon_shell_snapshot(runtime_state.harvestMoonLastShell, config, "createSpacingShell_last_shell")
-end
-
-local function log_longsword_harvest_moon_heartbeat(debug_config)
-    if runtime_state.harvestMoonDebugHeartbeatWritten == true then
-        return
-    end
-
-    runtime_state.harvestMoonDebugHeartbeatWritten = true
-    custom_gp_log("[CustomGP][HarvestMoon] debug enabled"
-        .. " featureEnabled=" .. tostring(debug_config and debug_config.moveState and debug_config.moveState.enabled == true)
-        .. " autoRefreshEnabled=" .. tostring(debug_config and debug_config.moveState and debug_config.moveState.autoRefreshEnabled == true)
-        .. " selectedWeaponType=" .. format_debug_value(settings.selectedWeaponType)
-        .. " currentWeaponType=" .. format_debug_value(runtime_state.lastKnownWeaponType)
-        .. " nodeId=" .. format_debug_value(runtime_state.lastKnownNodeId)
-        .. " nodeName=" .. tostring(runtime_state.lastKnownNodeName)
-        .. " motionId=" .. format_debug_value(runtime_state.lastKnownMotionId)
-        .. " motionFrame=" .. format_debug_value(runtime_state.lastKnownMotionFrame))
-    custom_gp_log("[CustomGP][HarvestMoon] names: English=Harvest Moon internal=spacing/windhole shell=LongSwordShell010")
-end
-
 local function snapshot_original_field(cache, object, field_name)
     if object == nil or field_name == nil then
         return nil
@@ -1626,7 +1357,7 @@ local function snapshot_original_field(cache, object, field_name)
     return cache[object][field_name]
 end
 
-local function apply_longsword_harvest_moon_object_field(object, cache, value_def, move_state, debug_label, debug_once)
+local function apply_longsword_harvest_moon_object_field(object, cache, value_def, move_state)
     if object == nil or value_def == nil or value_def.field == nil then
         return false
     end
@@ -1642,16 +1373,6 @@ local function apply_longsword_harvest_moon_object_field(object, cache, value_de
         object:set_field(value_def.field, target_value)
         return true
     end) == true
-
-    if debug_once == true then
-        custom_gp_log("[CustomGP][HarvestMoon] write " .. tostring(debug_label or value_def.target)
-            .. "." .. tostring(value_def.field)
-            .. " original=" .. format_debug_value(original_value)
-            .. " multiplier=" .. format_debug_value(multiplier)
-            .. " target=" .. format_debug_value(target_value)
-            .. " applied=" .. tostring(applied)
-            .. " after=" .. format_debug_value(get_debug_field_value(object, value_def.field)))
-    end
 
     return applied
 end
@@ -1679,93 +1400,16 @@ local function apply_longsword_harvest_moon_shell(shell_object, config)
     end
 
     runtime_state.harvestMoonCapturedShells[shell_object] = true
-    runtime_state.harvestMoonLastShell = shell_object
 
     local applied = false
     local move_param = get_longsword_harvest_moon_move_param(shell_object, config.moveDef)
-    local debug_once = config.moveState.debugPrintEnabled == true
-        and runtime_state.harvestMoonDebugSeenShells[shell_object] ~= true
     for _, value_def in ipairs(config.moveDef.shellParamValues or {}) do
-        if value_def.target == "shell" then
-            applied = apply_longsword_harvest_moon_object_field(
-                shell_object,
-                runtime_state.harvestMoonOriginalShellValues,
-                value_def,
-                config.moveState,
-                "shell",
-                debug_once
-            ) or applied
-        else
-            applied = apply_longsword_harvest_moon_object_field(
-                move_param,
-                runtime_state.harvestMoonOriginalParams,
-                value_def,
-                config.moveState,
-                "moveParam",
-                debug_once
-            ) or applied
-        end
-    end
-
-    if debug_once then
-        runtime_state.harvestMoonDebugSeenShells[shell_object] = true
-        log_harvest_moon_shell_snapshot(shell_object, config, "new_shell_capture")
-    end
-
-    runtime_state.harvestMoonPatchedThisFrame = runtime_state.harvestMoonPatchedThisFrame or applied
-    return applied
-end
-
-local function apply_longsword_harvest_moon_visual_scale(config)
-    if config == nil
-        or config.moveDef.visualScaleActionIndex == nil
-        or type(config.moveDef.visualScaleFields) ~= "table" then
-        return false
-    end
-
-    local action_obj = get_action(config.moveDef.visualScaleActionIndex)
-    if action_obj == nil then
-        return false
-    end
-
-    local multiplier = get_shell_param_multiplier_by_id(
-        config.moveState,
-        config.moveDef.visualScaleMultiplierParamId,
-        1.0
-    )
-    local visual_debug_signature = tostring(action_obj) .. ":" .. tostring(multiplier)
-    local should_log_visual_write = config.moveState.debugPrintEnabled == true
-        and runtime_state.harvestMoonLastVisualDebugSignature ~= visual_debug_signature
-    local applied = false
-    for _, field_name in ipairs(config.moveDef.visualScaleFields) do
-        local original_value = snapshot_original_field(
-            runtime_state.harvestMoonOriginalVisualScale,
-            action_obj,
-            field_name
-        )
-
-        if type(original_value) == "number" then
-            local target_value = original_value * multiplier
-            local field_applied = safe_call(function()
-                action_obj:set_field(field_name, target_value)
-                return true
-            end) == true
-
-            if should_log_visual_write then
-                custom_gp_log("[CustomGP][HarvestMoon] visualWrite 9531." .. tostring(field_name)
-                    .. " original=" .. format_debug_value(original_value)
-                    .. " multiplier=" .. format_debug_value(multiplier)
-                    .. " target=" .. format_debug_value(target_value)
-                    .. " applied=" .. tostring(field_applied)
-                    .. " after=" .. format_debug_value(get_debug_field_value(action_obj, field_name)))
-            end
-
-            applied = field_applied or applied
-        end
-    end
-
-    if should_log_visual_write then
-        runtime_state.harvestMoonLastVisualDebugSignature = visual_debug_signature
+        applied = apply_longsword_harvest_moon_object_field(
+            move_param,
+            runtime_state.harvestMoonOriginalParams,
+            value_def,
+            config.moveState
+        ) or applied
     end
 
     runtime_state.harvestMoonPatchedThisFrame = runtime_state.harvestMoonPatchedThisFrame or applied
@@ -1789,33 +1433,11 @@ end
 
 local function restore_longsword_harvest_moon_params()
     restore_longsword_harvest_moon_cache(runtime_state.harvestMoonOriginalParams)
-    restore_longsword_harvest_moon_cache(runtime_state.harvestMoonOriginalShellValues)
-    restore_longsword_harvest_moon_cache(runtime_state.harvestMoonOriginalVisualScale)
     runtime_state.harvestMoonCapturedShells = setmetatable({}, { __mode = "k" })
-    runtime_state.harvestMoonDebugSeenShells = setmetatable({}, { __mode = "k" })
-    runtime_state.harvestMoonLastShell = nil
-    runtime_state.harvestMoonLastVisualDebugSignature = nil
 end
 
 local function apply_longsword_harvest_moon_custom_params()
     local config = get_longsword_harvest_moon_config()
-    local debug_config = get_longsword_harvest_moon_debug_config()
-    local launch_move_def = (config and config.moveDef) or (debug_config and debug_config.moveDef)
-    local launch_node_id = launch_move_def and launch_move_def.launchNodeId
-    local launch_node_name = launch_move_def and launch_move_def.launchNodeName
-    local is_launch_node = (launch_node_id ~= nil and runtime_state.lastKnownNodeId == launch_node_id)
-        or (launch_node_name ~= nil and runtime_state.lastKnownNodeName == launch_node_name)
-
-    if debug_config ~= nil then
-        log_longsword_harvest_moon_heartbeat(debug_config)
-        if is_launch_node and runtime_state.harvestMoonLastLaunchNodeActive ~= true then
-            log_longsword_harvest_moon_launch(config or debug_config)
-        end
-        runtime_state.harvestMoonLastLaunchNodeActive = is_launch_node
-    else
-        runtime_state.harvestMoonLastLaunchNodeActive = false
-        runtime_state.harvestMoonDebugHeartbeatWritten = false
-    end
 
     if config == nil then
         if runtime_state.harvestMoonPatchedThisFrame then
@@ -1829,7 +1451,6 @@ local function apply_longsword_harvest_moon_custom_params()
     for shell_object, _ in pairs(runtime_state.harvestMoonCapturedShells) do
         apply_longsword_harvest_moon_shell(shell_object, config)
     end
-    apply_longsword_harvest_moon_visual_scale(config)
 end
 
 local function install_longsword_harvest_moon_shell_pre_hooks()
@@ -1864,16 +1485,13 @@ local function install_longsword_harvest_moon_shell_pre_hooks()
                     end,
                     function(retval)
                         local config = get_longsword_harvest_moon_config()
-                        local debug_config = get_longsword_harvest_moon_debug_config()
-                        if config == nil and debug_config == nil then
+                        if config == nil then
                             return retval
                         end
 
                         local this = sdk.to_managed_object(thread.get_hook_storage()["customGpFramesHarvestMoonShellThis"])
-                        if this ~= nil and config ~= nil then
+                        if this ~= nil then
                             apply_longsword_harvest_moon_shell(this, config)
-                        elseif this ~= nil and debug_config ~= nil then
-                            log_longsword_harvest_moon_shell_debug_once(this, debug_config, "shell_hook_debug_only")
                         end
 
                         return retval
@@ -1886,155 +1504,6 @@ local function install_longsword_harvest_moon_shell_pre_hooks()
 end
 
 install_longsword_harvest_moon_shell_pre_hooks()
-
-local function is_master_longsword_object(player_longsword)
-    if player_longsword == nil then
-        return false
-    end
-
-    local master_player = get_master_player()
-    if master_player == nil then
-        return false
-    end
-
-    local master_player_index = safe_call(function()
-        return master_player:get_field("_PlayerIndex")
-    end)
-    local longsword_player_index = safe_call(function()
-        return player_longsword:get_field("_PlayerIndex")
-    end)
-
-    return master_player_index ~= nil and master_player_index == longsword_player_index
-end
-
-local function update_longsword_harvest_moon_auto_refresh_tick()
-    local config = get_longsword_harvest_moon_auto_refresh_config()
-    if config == nil then
-        runtime_state.harvestMoonAutoRefreshTick = 0
-        runtime_state.harvestMoonAutoRefreshReady = false
-        return
-    end
-
-    local interval = config.moveDef.autoRefreshIntervalFrames or 12
-    if interval < 1 then
-        interval = 1
-    end
-
-    runtime_state.harvestMoonAutoRefreshTick = runtime_state.harvestMoonAutoRefreshTick + 1
-    if runtime_state.harvestMoonAutoRefreshTick >= interval then
-        runtime_state.harvestMoonAutoRefreshTick = 0
-        runtime_state.harvestMoonAutoRefreshReady = true
-    end
-end
-
-local function log_longsword_harvest_moon_auto_refresh(config, player_longsword, applied)
-    if config == nil or config.moveState.debugPrintEnabled ~= true then
-        return
-    end
-
-    runtime_state.harvestMoonAutoRefreshCallCount = runtime_state.harvestMoonAutoRefreshCallCount + 1
-    local count = runtime_state.harvestMoonAutoRefreshCallCount
-    if count > 10 and count % 30 ~= 0 then
-        return
-    end
-
-    custom_gp_log("[CustomGP][HarvestMoon] autoRefresh #" .. tostring(count)
-        .. " applied=" .. tostring(applied)
-        .. " interval=" .. tostring(config.moveDef.autoRefreshIntervalFrames or 12)
-        .. " player=" .. tostring(player_longsword)
-        .. " nodeId=" .. format_debug_value(runtime_state.lastKnownNodeId)
-        .. " nodeName=" .. tostring(runtime_state.lastKnownNodeName)
-        .. " motionId=" .. format_debug_value(runtime_state.lastKnownMotionId)
-        .. " motionFrame=" .. format_debug_value(runtime_state.lastKnownMotionFrame))
-end
-
-local function install_longsword_harvest_moon_auto_refresh_hook()
-    if runtime_state.harvestMoonAutoRefreshHookInstalled then
-        return
-    end
-
-    local longsword_type = sdk.find_type_definition("snow.player.LongSword")
-    if longsword_type == nil then
-        return
-    end
-
-    local update_method = longsword_type:get_method("update")
-    local create_spacing_shell_method = longsword_type:get_method("createSpacingShell")
-    if update_method == nil or create_spacing_shell_method == nil then
-        return
-    end
-
-    runtime_state.harvestMoonAutoRefreshHookInstalled = true
-    safe_call(function()
-        sdk.hook(
-            update_method,
-            function(args)
-                local config = get_longsword_harvest_moon_auto_refresh_config()
-                if config == nil or runtime_state.harvestMoonAutoRefreshReady ~= true then
-                    return sdk.PreHookResult.CALL_ORIGINAL
-                end
-
-                local this = sdk.to_managed_object(args[2])
-                if not is_master_longsword_object(this) then
-                    return sdk.PreHookResult.CALL_ORIGINAL
-                end
-
-                local applied = safe_call(function()
-                    create_spacing_shell_method:call(this)
-                    return true
-                end) == true
-                runtime_state.harvestMoonAutoRefreshReady = false
-                log_longsword_harvest_moon_auto_refresh(config, this, applied)
-
-                return sdk.PreHookResult.CALL_ORIGINAL
-            end,
-            function(retval)
-                return retval
-            end
-        )
-        return true
-    end)
-end
-
-install_longsword_harvest_moon_auto_refresh_hook()
-
-local function install_longsword_harvest_moon_create_shell_hook()
-    if runtime_state.harvestMoonCreateShellHookInstalled then
-        return
-    end
-
-    local longsword_type = sdk.find_type_definition("snow.player.LongSword")
-    if longsword_type == nil then
-        return
-    end
-
-    local create_spacing_shell_method = longsword_type:get_method("createSpacingShell")
-    if create_spacing_shell_method == nil then
-        return
-    end
-
-    runtime_state.harvestMoonCreateShellHookInstalled = true
-    safe_call(function()
-        sdk.hook(
-            create_spacing_shell_method,
-            function(args)
-                thread.get_hook_storage()["customGpFramesHarvestMoonLongSwordThis"] = args[2]
-            end,
-            function(retval)
-                local debug_config = get_longsword_harvest_moon_debug_config()
-                if debug_config ~= nil then
-                    local this = sdk.to_managed_object(thread.get_hook_storage()["customGpFramesHarvestMoonLongSwordThis"])
-                    log_longsword_harvest_moon_create_spacing_shell(this, debug_config)
-                end
-
-                return retval
-            end
-        )
-        return true
-    end)
-end
-
-install_longsword_harvest_moon_create_shell_hook()
 
 sdk.hook(
     sdk.find_type_definition("snow.player.PlayerMotionControl"):get_method("lateUpdate"),
@@ -2480,7 +1949,6 @@ end
 re.on_frame(function()
     apply_custom_gp_frames()
     refresh_runtime_cache()
-    update_longsword_harvest_moon_auto_refresh_tick()
     apply_longsword_harvest_moon_custom_params()
 
     local should_run_longsword_runtime = runtime_state.lastKnownWeaponType == 2
@@ -2600,22 +2068,6 @@ local function draw_weapon_moves(weapon_def)
                         changed = true
                     end
                 end
-            end
-
-            if move_def.debugPrintOption == true then
-                toggle, move_state.debugPrintEnabled = imgui.checkbox(
-                    (move_def.debugPrintLabel or "调试打印") .. "##move_debug_print_" .. weapon_def.weaponType .. "_" .. move_def.id,
-                    move_state.debugPrintEnabled
-                )
-                changed = changed or toggle
-            end
-
-            if move_def.autoRefreshOption == true then
-                toggle, move_state.autoRefreshEnabled = imgui.checkbox(
-                    (move_def.autoRefreshLabel or "自动续圆月") .. "##move_auto_refresh_" .. weapon_def.weaponType .. "_" .. move_def.id,
-                    move_state.autoRefreshEnabled
-                )
-                changed = changed or toggle
             end
 
             if imgui.button("恢复默认##move_reset_" .. weapon_def.weaponType .. "_" .. move_def.id) then

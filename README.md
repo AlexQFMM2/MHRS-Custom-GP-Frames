@@ -38,10 +38,9 @@
   - 移动、跑动、回避等自由态，或可选全动作范围内受击时自动推进到见切节点
   - 自动触发后会等见切起手动作进入成功窗口，再尝试推进到原版见切成功路线
   - 自动见切只响应怪物攻击，忽略圆月边界、自家 shell 等非怪物伤害
-- 太刀圆月参数（实验）
+- 太刀圆月持续时间（实验）
   - 运行时捕获 `LongSwordShell010`
-  - 可按倍率调整圆月持续时间、水平范围、垂直范围和警告圈范围
-  - 视觉圆圈跟随水平范围倍率同步缩放
+  - 只按倍率调整圆月持续时间，不修改范围、视觉圈或自动刷新
 - 弓自动闪身（实验）
   - 参考 `AutoDodgeBolt.lua`
   - 受击时自动推进到 `DodgeBolt` 节点
@@ -143,16 +142,11 @@
   - 如果受击瞬间动作帧读取不稳定，会在见切起手后第 `24` 帧兜底强制进入成功路线
 
 - 武器：`太刀`
-- 功能：`圆月参数`
+- 功能：`圆月持续时间`
 - 当前模式：独立功能开关，不修改 GP 帧
-- 默认行为：关闭；倍率默认均为 `1.00`
+- 默认行为：关闭；倍率默认 `1.00`
 - 可调项目：
   - 持续时间倍率：`_moveParam._lifeTime`
-  - 水平范围倍率：`_moveParam._Range`
-  - 垂直范围倍率：`_moveParam._RangeY`
-  - 警告圈范围倍率：`_moveParam._WarningRange`
-  - 实例存活时间倍率：`LongSwordShell010._lifeTime`
-  - 视觉圆圈缩放：`9531._BaseScale / 9531._CurrentScale`，跟随水平范围倍率
 
 - 武器：`弓`
 - 招式：`闪身箭斩`
@@ -382,39 +376,25 @@
 
 这项功能不手动改练气等级、不手动补圆月追加伤害，也不手动补派生资格；回砍、圆月和大回环/气刃无双斩派生尽量交给原版成功路线处理。
 
-## 太刀圆月参数（实验）
+## 太刀圆月持续时间（实验）
 
 这项功能在 UI 里是：
 
-- `太刀 -> 圆月参数 [测试中]`
+- `太刀 -> 圆月持续时间`
 
-开启后，脚本会在运行时捕获圆月本体 `LongSwordShell010`，并按倍率修改相关字段。这里使用倍率而不是写死秒数/半径，是为了保留游戏当前版本的原始参数作为基准。视觉圆圈同步仍在测试中，当前保留 `9531 / PlayerFsm2ActionSetEffectAndScale` 的实验写入，但不再把它视为已确认方案。
+开启后，脚本会在运行时捕获圆月本体 `LongSwordShell010`，只按倍率修改 `_moveParam._lifeTime`。这里使用倍率而不是写死秒数，是为了保留游戏当前版本的原始参数作为基准。
 
-默认还会开启 `自动续圆月`。这项参考 `Harvest_Moon.lua` 的做法，在本地玩家太刀 `update` 中每 12 帧调用一次 `snow.player.LongSword:createSpacingShell()`，用反复创建/刷新圆月本体的方式实现近似永续。
+范围、视觉圈、自动续圆月和调试日志已经撤回；这一版只保留你体感确认有效的持续时间修改，尽量减少额外运行时开销。
 
 可调字段：
 
-- `自动续圆月`
 - `_moveParam._lifeTime`
-- `_moveParam._Range`
-- `_moveParam._RangeY`
-- `_moveParam._WarningRange`
-- `LongSwordShell010._lifeTime`
-- `9531._BaseScale`
-- `9531._CurrentScale`
-
-可选调试：
-
-- `调试打印`：开启后先写入一条 heartbeat；进入圆月启动节点或首次捕获 `LongSwordShell010` 时，把 `[CustomGP][HarvestMoon]` 快照写入日志文件。
-- 优先日志路径：`reframework/data/CustomGPFrames_harvest_moon_debug.log`；如果该路径无法创建，会退到游戏根目录的 `CustomGPFrames_harvest_moon_debug.log`。
-- 调试会额外 hook `snow.player.LongSword:createSpacingShell`，也就是圆月本体创建入口；即使没有读到 FSM 节点，也能记录创建调用。
-- 快照包含当前节点、motion、`9529/9530/9531` action 字段、`createSpacingShell` 调用、shell `_lifeTime`、`_userData/_moveParam`、以及 `_lifeTime/_Range/_RangeY/_WarningRange` 写入前后值。
 
 关闭功能或关闭总开关后，脚本会尽量把已捕获对象恢复为本次会话记录到的原始值。
 
 ## 圆月后续修改记录
 
-当前先记录 BGM 调研方向；持续时间和范围已经先以倍率 UI 落地。
+当前先记录 BGM 调研方向；持续时间已经先以倍率 UI 落地，范围和视觉圈修改已从运行时代码撤回。
 
 - 圆月本体创建节点：
   - `atk.WireReplaceF_MR.plw_LongSword_100_160`
