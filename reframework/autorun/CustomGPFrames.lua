@@ -81,6 +81,11 @@ local runtime_state = {
     cachedTreeObject = nil,
     nodeNameById = {},
     autoDefenseState = {},
+    harvestMoonOriginalParams = setmetatable({}, { __mode = "k" }),
+    harvestMoonOriginalShellValues = setmetatable({}, { __mode = "k" }),
+    harvestMoonCapturedShells = setmetatable({}, { __mode = "k" }),
+    harvestMoonHooksInstalled = false,
+    harvestMoonPatchedThisFrame = false,
     nextAttemptId = 1
 }
 
@@ -377,6 +382,10 @@ local function is_longsword_foresight_start_node_name(node_name, trigger_node_na
         or starts_with(node_name, trigger_node_name .. ".")
 end
 
+local function is_longsword_foresight_family_node_name(node_name)
+    return starts_with(node_name, "atk.atk_147")
+end
+
 local function mark_free_state_seen(weapon_type, node_id, node_name)
     runtime_state.lastFreeStateWeaponType = weapon_type
     runtime_state.lastFreeStateNodeId = node_id
@@ -603,6 +612,18 @@ local function ensure_move_state(weapon_type, move_def)
         end
     end
 
+    if type(move_def.shellParamValues) == "table" then
+        if type(move_state.shellParamValues) ~= "table" then
+            move_state.shellParamValues = {}
+        end
+
+        for _, value_def in ipairs(move_def.shellParamValues) do
+            if move_state.shellParamValues[value_def.id] == nil then
+                move_state.shellParamValues[value_def.id] = value_def.default
+            end
+        end
+    end
+
     return move_state
 end
 
@@ -770,6 +791,13 @@ local function reset_move_state(move_def, move_state)
         move_state.triggerMode = move_def.triggerModeDefault
             or (move_def.triggerModeOptions[1] and move_def.triggerModeOptions[1].id)
     end
+
+    if type(move_def.shellParamValues) == "table" then
+        move_state.shellParamValues = {}
+        for _, value_def in ipairs(move_def.shellParamValues) do
+            move_state.shellParamValues[value_def.id] = value_def.default
+        end
+    end
 end
 
 local function find_move_definition(weapon_type, move_id)
@@ -831,6 +859,10 @@ end
 
 local function get_longsword_auto_foresight_config()
     return get_enabled_move_config(2, "free_state_auto_foresight")
+end
+
+local function get_longsword_harvest_moon_config()
+    return get_enabled_move_config(2, "harvest_moon_custom_params")
 end
 
 local function get_trigger_mode_index(move_def, move_state)
@@ -1265,6 +1297,186 @@ local function try_jump_to_node(node_id)
     return ok == true
 end
 
+local function get_shell_param_multiplier(move_state, value_def)
+    if type(move_state.shellParamValues) ~= "table" then
+        return value_def.default or 1.0
+    end
+
+    return move_state.shellParamValues[value_def.id] or value_def.default or 1.0
+end
+
+local function snapshot_original_field(cache, object, field_name)
+    if object == nil or field_name == nil then
+        return nil
+    end
+
+    if cache[object] == nil then
+        cache[object] = {}
+    end
+
+    if cache[object][field_name] == nil then
+        cache[object][field_name] = safe_call(function()
+            return object:get_field(field_name)
+        end)
+    end
+
+    return cache[object][field_name]
+end
+
+local function apply_longsword_harvest_moon_object_field(object, cache, value_def, move_state)
+    if object == nil or value_def == nil or value_def.field == nil then
+        return false
+    end
+
+    local original_value = snapshot_original_field(cache, object, value_def.field)
+    if type(original_value) ~= "number" then
+        return false
+    end
+
+    local multiplier = get_shell_param_multiplier(move_state, value_def)
+    return safe_call(function()
+        object:set_field(value_def.field, original_value * multiplier)
+        return true
+    end) == true
+end
+
+local function get_longsword_harvest_moon_move_param(shell_object, move_def)
+    if shell_object == nil then
+        return nil
+    end
+
+    local main_user_data = safe_call(function()
+        return shell_object:get_field(move_def.shellMainUserDataField or "_userData")
+    end)
+    if main_user_data == nil then
+        return nil
+    end
+
+    return safe_call(function()
+        return main_user_data:get_field(move_def.shellMoveParamField or "_moveParam")
+    end)
+end
+
+local function apply_longsword_harvest_moon_shell(shell_object, config)
+    if shell_object == nil or config == nil then
+        return false
+    end
+
+    runtime_state.harvestMoonCapturedShells[shell_object] = true
+
+    local applied = false
+    local move_param = get_longsword_harvest_moon_move_param(shell_object, config.moveDef)
+    for _, value_def in ipairs(config.moveDef.shellParamValues or {}) do
+        if value_def.target == "shell" then
+            applied = apply_longsword_harvest_moon_object_field(
+                shell_object,
+                runtime_state.harvestMoonOriginalShellValues,
+                value_def,
+                config.moveState
+            ) or applied
+        else
+            applied = apply_longsword_harvest_moon_object_field(
+                move_param,
+                runtime_state.harvestMoonOriginalParams,
+                value_def,
+                config.moveState
+            ) or applied
+        end
+    end
+
+    runtime_state.harvestMoonPatchedThisFrame = runtime_state.harvestMoonPatchedThisFrame or applied
+    return applied
+end
+
+local function restore_longsword_harvest_moon_cache(cache)
+    for object, fields in pairs(cache) do
+        if object ~= nil and type(fields) == "table" then
+            for field_name, value in pairs(fields) do
+                safe_call(function()
+                    object:set_field(field_name, value)
+                    return true
+                end)
+            end
+        end
+
+        cache[object] = nil
+    end
+end
+
+local function restore_longsword_harvest_moon_params()
+    restore_longsword_harvest_moon_cache(runtime_state.harvestMoonOriginalParams)
+    restore_longsword_harvest_moon_cache(runtime_state.harvestMoonOriginalShellValues)
+    runtime_state.harvestMoonCapturedShells = setmetatable({}, { __mode = "k" })
+end
+
+local function apply_longsword_harvest_moon_custom_params()
+    local config = get_longsword_harvest_moon_config()
+    if config == nil then
+        if runtime_state.harvestMoonPatchedThisFrame then
+            restore_longsword_harvest_moon_params()
+            runtime_state.harvestMoonPatchedThisFrame = false
+        end
+
+        return
+    end
+
+    for shell_object, _ in pairs(runtime_state.harvestMoonCapturedShells) do
+        apply_longsword_harvest_moon_shell(shell_object, config)
+    end
+end
+
+local function install_longsword_harvest_moon_shell_pre_hooks()
+    if runtime_state.harvestMoonHooksInstalled then
+        return
+    end
+
+    local shell_type = sdk.find_type_definition("snow.shell.LongSwordShell010")
+    if shell_type == nil then
+        return
+    end
+    runtime_state.harvestMoonHooksInstalled = true
+
+    local method_names = {
+        "start",
+        "update",
+        "lateUpdate",
+        "activate",
+        "setup",
+        "initialize",
+        "onStart"
+    }
+
+    for _, method_name in ipairs(method_names) do
+        local method = shell_type:get_method(method_name)
+        if method ~= nil then
+            safe_call(function()
+                sdk.hook(
+                    method,
+                    function(args)
+                        thread.get_hook_storage()["customGpFramesHarvestMoonShellThis"] = args[2]
+                    end,
+                    function(retval)
+                        local config = get_longsword_harvest_moon_config()
+                        if config == nil then
+                            return retval
+                        end
+
+                        local this = sdk.to_managed_object(thread.get_hook_storage()["customGpFramesHarvestMoonShellThis"])
+                        if this ~= nil then
+                            apply_longsword_harvest_moon_shell(this, config)
+                        end
+
+                        return retval
+                    end
+                )
+                return true
+            end)
+        end
+    end
+end
+
+install_longsword_harvest_moon_shell_pre_hooks()
+
 sdk.hook(
     sdk.find_type_definition("snow.player.PlayerMotionControl"):get_method("lateUpdate"),
     function(args)
@@ -1525,9 +1737,12 @@ local function stage_longsword_foresight_reward(config, owner_type)
         successRouteNodeName = config.moveDef.autoForesightSuccessRouteNodeName,
         successRouteStartFrame = config.moveDef.autoForesightSuccessRouteStartFrame or 38,
         successRouteEndFrame = config.moveDef.autoForesightSuccessRouteEndFrame or 52,
+        successRouteFallbackFrames = config.moveDef.autoForesightSuccessRouteFallbackFrames or 24,
         validationFramesRemaining = config.moveDef.autoForesightSuccessRouteTimeoutFrames or 90,
         arrivalFramesRemaining = config.moveDef.autoForesightSuccessRouteArrivalFrames or 5,
         seenTriggerNode = false,
+        triggerNodeFrames = 0,
+        sawReliableMotionFrame = false,
         jumpAttempts = 0
     }
     runtime_state.nextAttemptId = runtime_state.nextAttemptId + 1
@@ -1546,16 +1761,27 @@ local function process_pending_longsword_foresight_reward()
         return
     end
 
+    local current_node_id = runtime_state.lastKnownNodeId or get_current_node_id()
     local current_node_name = runtime_state.lastKnownNodeName or get_current_node_name()
     local motion_frame = runtime_state.lastKnownMotionFrame
-    local is_foresight_start_node = is_longsword_foresight_start_node_name(current_node_name, pending.triggerNodeName)
+    local is_foresight_start_node = current_node_id == pending.triggerNodeId
+        or is_longsword_foresight_start_node_name(current_node_name, pending.triggerNodeName)
+    local is_foresight_family_node = is_longsword_foresight_family_node_name(current_node_name)
 
     if is_foresight_start_node then
         pending.seenTriggerNode = true
+        pending.triggerNodeFrames = (pending.triggerNodeFrames or 0) + 1
+    elseif is_foresight_family_node and not pending.seenTriggerNode then
+        pending.seenTriggerNode = true
+        pending.triggerNodeFrames = (pending.triggerNodeFrames or 0) + 1
     elseif pending.seenTriggerNode then
-        if current_node_name ~= nil and not starts_with(current_node_name, "atk.atk_147") then
+        if current_node_name ~= nil and not is_foresight_family_node then
             runtime_state.pendingLongSwordForesightReward = nil
             return
+        end
+
+        if current_node_name == nil or is_foresight_family_node then
+            pending.triggerNodeFrames = (pending.triggerNodeFrames or 0) + 1
         end
     else
         pending.arrivalFramesRemaining = (pending.arrivalFramesRemaining or 1) - 1
@@ -1565,21 +1791,26 @@ local function process_pending_longsword_foresight_reward()
         end
     end
 
-    if not is_foresight_start_node or motion_frame == nil then
-        pending.validationFramesRemaining = (pending.validationFramesRemaining or 1) - 1
-        if pending.validationFramesRemaining <= 0 then
-            runtime_state.pendingLongSwordForesightReward = nil
+    local reached_success_route_timing = false
+    if is_foresight_start_node and type(motion_frame) == "number" then
+        if motion_frame <= (pending.successRouteEndFrame or 52) then
+            pending.sawReliableMotionFrame = true
         end
 
-        return
+        if pending.sawReliableMotionFrame
+            and motion_frame >= (pending.successRouteStartFrame or 38)
+            and (pending.successRouteEndFrame == nil or motion_frame <= pending.successRouteEndFrame) then
+            reached_success_route_timing = true
+        end
     end
 
-    if pending.successRouteEndFrame ~= nil and motion_frame > pending.successRouteEndFrame then
-        runtime_state.pendingLongSwordForesightReward = nil
-        return
+    if not reached_success_route_timing
+        and pending.seenTriggerNode
+        and (pending.triggerNodeFrames or 0) >= (pending.successRouteFallbackFrames or 24) then
+        reached_success_route_timing = true
     end
 
-    if motion_frame < (pending.successRouteStartFrame or 38) then
+    if not reached_success_route_timing then
         pending.validationFramesRemaining = (pending.validationFramesRemaining or 1) - 1
         if pending.validationFramesRemaining <= 0 then
             runtime_state.pendingLongSwordForesightReward = nil
@@ -1690,6 +1921,7 @@ end
 re.on_frame(function()
     apply_custom_gp_frames()
     refresh_runtime_cache()
+    apply_longsword_harvest_moon_custom_params()
 
     local should_run_longsword_runtime = runtime_state.lastKnownWeaponType == 2
         or runtime_state.pendingLongSwordIaiReward ~= nil
@@ -1786,6 +2018,27 @@ local function draw_weapon_moves(weapon_def)
                 if trigger_mode_changed then
                     move_state.triggerMode = move_def.triggerModeOptions[trigger_mode_index].id
                     changed = true
+                end
+            end
+
+            if type(move_def.shellParamValues) == "table" then
+                if type(move_state.shellParamValues) ~= "table" then
+                    move_state.shellParamValues = {}
+                end
+
+                for _, value_def in ipairs(move_def.shellParamValues) do
+                    local current_value = move_state.shellParamValues[value_def.id] or value_def.default
+                    toggle, current_value = imgui.slider_float(
+                        value_def.label .. "##move_shell_param_" .. weapon_def.weaponType .. "_" .. move_def.id .. "_" .. value_def.id,
+                        current_value,
+                        value_def.min,
+                        value_def.max,
+                        value_def.format or "%.2f"
+                    )
+                    if toggle then
+                        move_state.shellParamValues[value_def.id] = current_value
+                        changed = true
+                    end
                 end
             end
 

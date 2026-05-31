@@ -56,6 +56,7 @@ local ordered_weapons = {
                 autoForesightSuccessRouteNodeName = "atk.atk_147.atk_147_end",
                 autoForesightSuccessRouteStartFrame = 38,
                 autoForesightSuccessRouteEndFrame = 52,
+                autoForesightSuccessRouteFallbackFrames = 24,
                 triggerModeLabel = "触发范围",
                 triggerModeDefault = "free_state",
                 triggerModeOptions = {
@@ -72,6 +73,70 @@ local ordered_weapons = {
                 enabledByDefault = false,
                 modeHint = "自由态受击时自动跳到见切斩",
                 description = "默认只在自由态触发；也可切到全动作模式，在普通动作受击时更激进地自动见切，但会保护居合、神威居合、水月、刚气刃斩和手动见切链。触发后会尝试进入原版见切成功路线，不手动补数值奖励。"
+            },
+            {
+                id = "harvest_moon_custom_params",
+                label = "圆月参数",
+                featureOnly = true,
+                shellParamMode = "longsword_harvest_moon",
+                shellTypeName = "snow.shell.LongSwordShell010",
+                shellMainUserDataField = "_userData",
+                shellMoveParamField = "_moveParam",
+                shellParamValues = {
+                    {
+                        id = "lifeTimeMultiplier",
+                        label = "持续时间倍率",
+                        field = "_lifeTime",
+                        target = "move_param",
+                        default = 1.0,
+                        min = 0.1,
+                        max = 5.0,
+                        format = "%.2f"
+                    },
+                    {
+                        id = "rangeMultiplier",
+                        label = "水平范围倍率",
+                        field = "_Range",
+                        target = "move_param",
+                        default = 1.0,
+                        min = 0.1,
+                        max = 5.0,
+                        format = "%.2f"
+                    },
+                    {
+                        id = "rangeYMultiplier",
+                        label = "垂直范围倍率",
+                        field = "_RangeY",
+                        target = "move_param",
+                        default = 1.0,
+                        min = 0.1,
+                        max = 5.0,
+                        format = "%.2f"
+                    },
+                    {
+                        id = "warningRangeMultiplier",
+                        label = "警告圈范围倍率",
+                        field = "_WarningRange",
+                        target = "move_param",
+                        default = 1.0,
+                        min = 0.1,
+                        max = 5.0,
+                        format = "%.2f"
+                    },
+                    {
+                        id = "shellLifeTimeMultiplier",
+                        label = "实例存活时间倍率",
+                        field = "_lifeTime",
+                        target = "shell",
+                        default = 1.0,
+                        min = 0.1,
+                        max = 5.0,
+                        format = "%.2f"
+                    }
+                },
+                enabledByDefault = false,
+                modeHint = "修改圆月 LongSwordShell010 的持续时间和范围倍率",
+                description = "实验功能：运行时捕获圆月本体 LongSwordShell010，并按倍率修改 _lifeTime、_Range、_RangeY、_WarningRange。默认倍率 1.00，不直接写死原版数值。"
             }
         }
     },
